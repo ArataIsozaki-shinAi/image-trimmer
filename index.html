@@ -210,12 +210,93 @@
   .editor-footer { display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
   .editor-footer-left, .editor-footer-right { display: flex; gap: 8px; flex-wrap: wrap; }
   .editor-hint { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+
+  /* ---- Welcome / Help modal ---- */
+  .header-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .header-row h1 { margin: 0 0 4px; }
+  .help-btn {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .help-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .guide-modal {
+    max-width: 560px;
+    padding: 28px;
+  }
+  .guide-modal h2 { margin: 0 0 6px; font-size: 22px; }
+  .guide-lead { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+  .guide-steps { display: flex; flex-direction: column; gap: 14px; margin: 0 0 20px; padding: 0; list-style: none; }
+  .guide-step {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .guide-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .guide-step h4 { margin: 2px 0 4px; font-size: 15px; }
+  .guide-step p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .guide-step kbd {
+    background: #f0f0f3;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-family: -apple-system, monospace;
+    color: var(--text);
+  }
+  .guide-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+  .guide-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .guide-checkbox input { width: 16px; height: 16px; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>画像自動トリミング</h1>
-  <p class="subtitle">画像をアップロードして、指定したサイズに自動でトリミングします</p>
+  <div class="header-row">
+    <div>
+      <h1>画像自動トリミング</h1>
+      <p class="subtitle" style="margin:0;">画像をアップロードして、指定したサイズに自動でトリミングします</p>
+    </div>
+    <button id="helpBtn" class="help-btn" type="button">使い方を見る</button>
+  </div>
 
   <div class="card">
     <div id="dropZone" class="drop-zone">
@@ -291,6 +372,58 @@
     <h3 style="margin:0 0 8px;">結果</h3>
     <div id="stats" class="stats"></div>
     <div id="results" class="results"></div>
+  </div>
+</div>
+
+<!-- Guide / welcome modal -->
+<div id="guideModal" class="modal-overlay hidden">
+  <div class="modal guide-modal">
+    <h2>はじめに — 使い方</h2>
+    <p class="guide-lead">数ステップで画像を指定サイズにトリミングできます。すべての処理はブラウザ内で完結するので、画像は外部に送信されません。</p>
+    <ol class="guide-steps">
+      <li class="guide-step">
+        <div class="guide-num">1</div>
+        <div>
+          <h4>画像を選択</h4>
+          <p>エリアをクリックして選択するか、ファイルをドラッグ&ドロップします。複数枚まとめて処理できます。</p>
+        </div>
+      </li>
+      <li class="guide-step">
+        <div class="guide-num">2</div>
+        <div>
+          <h4>サイズ・形式を指定</h4>
+          <p>「幅 × 高さ」を入力するか、<kbd>Uber Eats</kbd> などのプリセットをクリック。出力形式 (JPEG / PNG / WebP) も選べます。</p>
+        </div>
+      </li>
+      <li class="guide-step">
+        <div class="guide-num">3</div>
+        <div>
+          <h4>トリミング実行</h4>
+          <p>「トリミング実行」を押すとサムネイル付きで結果が表示されます。中央クロップ / 余白追加 / 引き伸ばしから選択可能。</p>
+        </div>
+      </li>
+      <li class="guide-step">
+        <div class="guide-num">4</div>
+        <div>
+          <h4>位置を微調整 (任意)</h4>
+          <p>結果の <kbd>編集</kbd> を押すと、ドラッグで位置移動・ホイールまたはスライダーで拡大縮小ができます。「適用」で確定。</p>
+        </div>
+      </li>
+      <li class="guide-step">
+        <div class="guide-num">5</div>
+        <div>
+          <h4>保存</h4>
+          <p>各結果の <kbd>保存</kbd> で個別ダウンロード、または「すべてダウンロード」で一括保存できます。</p>
+        </div>
+      </li>
+    </ol>
+    <div class="guide-footer">
+      <label class="guide-checkbox">
+        <input type="checkbox" id="guideDontShow">
+        <span>次回から自動で表示しない</span>
+      </label>
+      <button id="guideCloseBtn" class="btn btn-primary">はじめる</button>
+    </div>
   </div>
 </div>
 
@@ -859,6 +992,50 @@
       closeEditor();
     }
   });
+
+  // ---------------- Guide modal ----------------
+  const guideModal = document.getElementById('guideModal');
+  const guideCloseBtn = document.getElementById('guideCloseBtn');
+  const guideDontShow = document.getElementById('guideDontShow');
+  const helpBtn = document.getElementById('helpBtn');
+  const GUIDE_STORAGE_KEY = 'imageTrimmer_guideDismissed_v1';
+
+  function openGuide() {
+    // Reflect current preference
+    try {
+      guideDontShow.checked = localStorage.getItem(GUIDE_STORAGE_KEY) === '1';
+    } catch (_) {}
+    guideModal.classList.remove('hidden');
+  }
+  function closeGuide() {
+    try {
+      if (guideDontShow.checked) {
+        localStorage.setItem(GUIDE_STORAGE_KEY, '1');
+      } else {
+        localStorage.removeItem(GUIDE_STORAGE_KEY);
+      }
+    } catch (_) {}
+    guideModal.classList.add('hidden');
+  }
+
+  helpBtn.addEventListener('click', openGuide);
+  guideCloseBtn.addEventListener('click', closeGuide);
+  guideModal.addEventListener('click', (e) => {
+    if (e.target === guideModal) closeGuide();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !guideModal.classList.contains('hidden')) {
+      closeGuide();
+    }
+  });
+
+  // Show guide on first visit
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(GUIDE_STORAGE_KEY) === '1'; } catch (_) {}
+  if (!dismissed) {
+    // Slight delay so the UI paints first
+    setTimeout(openGuide, 150);
+  }
 
   function downloadBlob(blob, name) {
     const url = URL.createObjectURL(blob);
