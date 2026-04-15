@@ -1045,13 +1045,12 @@
       text: 'この枠をクリックして画像を選択するか、ファイルをそのままドラッグ&ドロップします。複数枚まとめて処理できます。',
     },
     {
-      selector: '#width',
+      selectors: ['#width', '#height', '.preset-row'],
       title: '2. サイズを指定',
       text: '出力したい幅と高さ (px) を入力します。Uber Eats などよく使うサイズは下のプリセットボタンから一発で設定できます。',
-      padX: 140, padY: 8,
     },
     {
-      selector: '#mode',
+      selectors: ['#mode', '#format'],
       title: '3. トリミング方式を選択',
       text: '「中央クロップ」(はみ出しを切り取り)、「全体表示」(余白を追加)、「引き伸ばし」から選べます。JPEG/PNG/WebP の出力形式も指定可能。',
     },
@@ -1124,12 +1123,38 @@
     positionTutorial(step);
   }
 
+  function resolveTargets(step) {
+    if (step.selectors && step.selectors.length) {
+      return step.selectors
+        .map(s => document.querySelector(s))
+        .filter(Boolean);
+    }
+    if (step.selector) {
+      const el = document.querySelector(step.selector);
+      return el ? [el] : [];
+    }
+    return [];
+  }
+
+  function unionRect(elements) {
+    const rects = elements.map(e => e.getBoundingClientRect());
+    if (!rects.length) return null;
+    let top = Infinity, left = Infinity, right = -Infinity, bottom = -Infinity;
+    for (const r of rects) {
+      if (r.top < top) top = r.top;
+      if (r.left < left) left = r.left;
+      if (r.right > right) right = r.right;
+      if (r.bottom > bottom) bottom = r.bottom;
+    }
+    return { top, left, right, bottom, width: right - left, height: bottom - top };
+  }
+
   function positionTutorial(step) {
     const padX = step.padX != null ? step.padX : 10;
     const padY = step.padY != null ? step.padY : 10;
-    const el = step.selector ? document.querySelector(step.selector) : null;
+    const targets = resolveTargets(step);
 
-    if (!el) {
+    if (!targets.length) {
       // Center the tooltip, hide spotlight
       tutorialSpotlight.style.opacity = '0';
       tutorialSpotlight.style.width = '0';
@@ -1142,12 +1167,13 @@
 
     tutorialSpotlight.style.opacity = '1';
 
-    // Scroll target into view (block: center)
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // Scroll the first target into view
+    targets[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
 
     // Wait a bit for smooth scroll to settle
     setTimeout(() => {
-      const rect = el.getBoundingClientRect();
+      const rect = unionRect(targets);
+      if (!rect) return;
       const top = Math.max(4, rect.top - padY);
       const left = Math.max(4, rect.left - padX);
       const width = rect.width + padX * 2;
