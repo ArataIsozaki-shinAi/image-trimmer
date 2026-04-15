@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>画像自動トリミング</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --border: #d2d2d7;
+    --accent: #0071e3;
+    --accent-hover: #0077ed;
+    --danger: #ff3b30;
+    --success: #34c759;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+  h1 { margin: 0 0 8px; font-size: 28px; }
+  .subtitle { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 48px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #fafafa;
+  }
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: var(--accent);
+    background: #f0f7ff;
+  }
+  .drop-zone p { margin: 8px 0; color: var(--muted); }
+  .drop-icon { font-size: 48px; margin-bottom: 8px; }
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .field input, .field select {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+    background: #fff;
+    font-family: inherit;
+  }
+  .field input:focus, .field select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0,113,227,0.15);
+  }
+  .preset-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .preset-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .preset-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:disabled { background: #a8c7e8; cursor: not-allowed; }
+  .btn-secondary { background: #e8e8ed; color: var(--text); }
+  .btn-secondary:hover { background: #dcdce1; }
+  .btn-danger { background: #fff; color: var(--danger); border: 1px solid var(--border); }
+  .btn-danger:hover { border-color: var(--danger); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .results {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .result-item {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .result-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    background: #f0f0f0 repeating-conic-gradient(#e8e8e8 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .result-thumb img { max-width: 100%; max-height: 100%; display: block; }
+  .result-info {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+  }
+  .result-name {
+    color: var(--text);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+  }
+  .result-actions { display: flex; gap: 6px; padding: 8px 12px 12px; }
+  .result-actions button {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+  .hidden { display: none !important; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; }
+  .checkbox-row input { width: 18px; height: 18px; }
+  .bg-color-row { display: flex; align-items: center; gap: 8px; }
+  .bg-color-row input[type=color] { width: 40px; height: 40px; padding: 2px; cursor: pointer; }
+  .stats { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+
+  /* ---- Editor modal ---- */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+  }
+  .modal {
+    background: var(--card);
+    border-radius: 12px;
+    max-width: 720px;
+    width: 100%;
+    max-height: 95vh;
+    overflow: auto;
+    padding: 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+  .modal h3 { margin: 0 0 12px; }
+  .editor-stage {
+    background: #222 repeating-conic-gradient(#2a2a2a 0% 25%, #1f1f1f 0% 50%) 50% / 20px 20px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    margin-bottom: 12px;
+    user-select: none;
+  }
+  .editor-canvas-wrap {
+    position: relative;
+    cursor: grab;
+    touch-action: none;
+    overflow: hidden;
+    border-radius: 4px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.2);
+  }
+  .editor-canvas-wrap.dragging { cursor: grabbing; }
+  .editor-canvas-wrap canvas { display: block; }
+  .editor-controls {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .editor-controls label { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .editor-controls input[type=range] { width: 100%; }
+  .editor-controls .zoom-val {
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--muted);
+    min-width: 44px;
+    text-align: right;
+  }
+  .editor-footer { display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
+  .editor-footer-left, .editor-footer-right { display: flex; gap: 8px; flex-wrap: wrap; }
+  .editor-hint { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>画像自動トリミング</h1>
+  <p class="subtitle">画像をアップロードして、指定したサイズに自動でトリミングします</p>
+
+  <div class="card">
+    <div id="dropZone" class="drop-zone">
+      <div class="drop-icon">📷</div>
+      <p><strong>クリックして画像を選択</strong>、またはここにドラッグ&ドロップ</p>
+      <p style="font-size:13px;">PNG / JPEG / WebP / GIF に対応 (複数可)</p>
+      <input type="file" id="fileInput" accept="image/*" multiple class="hidden">
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 12px;">トリミング設定</h3>
+    <div class="controls">
+      <div class="field">
+        <label for="width">幅 (px)</label>
+        <input type="number" id="width" min="1" max="10000" value="800">
+      </div>
+      <div class="field">
+        <label for="height">高さ (px)</label>
+        <input type="number" id="height" min="1" max="10000" value="800">
+      </div>
+      <div class="field">
+        <label for="mode">トリミング方式</label>
+        <select id="mode">
+          <option value="cover">中央クロップ (はみ出し切り取り)</option>
+          <option value="contain">全体表示 (余白を追加)</option>
+          <option value="stretch">引き伸ばし</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="format">出力フォーマット</label>
+        <select id="format">
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/png">PNG</option>
+          <option value="image/webp">WebP</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="quality">品質 (JPEG/WebP)</label>
+        <input type="number" id="quality" min="1" max="100" value="92">
+      </div>
+      <div class="field" id="bgField">
+        <label for="bgColor">背景色 (余白用)</label>
+        <div class="bg-color-row">
+          <input type="color" id="bgColor" value="#ffffff">
+          <label class="checkbox-row" style="margin:0;">
+            <input type="checkbox" id="bgTransparent">
+            <span style="font-size:13px;">透過</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="preset-row">
+      <span style="color:var(--muted); font-size:13px; align-self:center;">プリセット:</span>
+      <button class="preset-btn" data-w="1080" data-h="1080">1:1 (1080×1080)</button>
+      <button class="preset-btn" data-w="1920" data-h="1080">16:9 (1920×1080)</button>
+      <button class="preset-btn" data-w="1080" data-h="1350">4:5 (1080×1350)</button>
+      <button class="preset-btn" data-w="1080" data-h="1920">9:16 (1080×1920)</button>
+      <button class="preset-btn" data-w="800" data-h="600">4:3 (800×600)</button>
+      <button class="preset-btn" data-w="400" data-h="400">サムネ (400×400)</button>
+    </div>
+
+    <div class="actions">
+      <button id="processBtn" class="btn btn-primary" disabled>トリミング実行</button>
+      <button id="downloadAllBtn" class="btn btn-secondary hidden">すべてダウンロード</button>
+      <button id="clearBtn" class="btn btn-danger hidden">クリア</button>
+    </div>
+  </div>
+
+  <div id="resultsCard" class="card hidden">
+    <h3 style="margin:0 0 8px;">結果</h3>
+    <div id="stats" class="stats"></div>
+    <div id="results" class="results"></div>
+  </div>
+</div>
+
+<!-- Editor modal -->
+<div id="editorModal" class="modal-overlay hidden">
+  <div class="modal">
+    <h3 id="editorTitle">位置・サイズを調整</h3>
+    <p class="editor-hint">ドラッグで位置を移動 / マウスホイールまたはスライダーで拡大縮小</p>
+    <div class="editor-stage">
+      <div id="editorCanvasWrap" class="editor-canvas-wrap">
+        <canvas id="editorCanvas"></canvas>
+      </div>
+    </div>
+    <div class="editor-controls">
+      <label for="zoomSlider">拡大率</label>
+      <input type="range" id="zoomSlider" min="10" max="500" value="100" step="1">
+      <span class="zoom-val" id="zoomVal">100%</span>
+    </div>
+    <div class="editor-footer">
+      <div class="editor-footer-left">
+        <button id="editorFitCover" class="btn btn-secondary">全体を埋める</button>
+        <button id="editorFitContain" class="btn btn-secondary">全体を表示</button>
+        <button id="editorCenter" class="btn btn-secondary">中央に配置</button>
+      </div>
+      <div class="editor-footer-right">
+        <button id="editorCancel" class="btn btn-danger">キャンセル</button>
+        <button id="editorApply" class="btn btn-primary">適用</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const widthInput = document.getElementById('width');
+  const heightInput = document.getElementById('height');
+  const modeSelect = document.getElementById('mode');
+  const formatSelect = document.getElementById('format');
+  const qualityInput = document.getElementById('quality');
+  const bgColor = document.getElementById('bgColor');
+  const bgTransparent = document.getElementById('bgTransparent');
+  const bgField = document.getElementById('bgField');
+  const processBtn = document.getElementById('processBtn');
+  const downloadAllBtn = document.getElementById('downloadAllBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const resultsCard = document.getElementById('resultsCard');
+  const resultsDiv = document.getElementById('results');
+  const statsDiv = document.getElementById('stats');
+
+  let files = [];
+  let processed = [];
+
+  // ------- File selection -------
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => addFiles(e.target.files));
+
+  ['dragenter', 'dragover'].forEach(ev => {
+    dropZone.addEventListener(ev, e => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(ev => {
+    dropZone.addEventListener(ev, e => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+    });
+  });
+  dropZone.addEventListener('drop', e => {
+    addFiles(e.dataTransfer.files);
+  });
+
+  function addFiles(fileList) {
+    const imgs = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+    if (!imgs.length) return;
+    files = files.concat(imgs);
+    updateUI();
+  }
+
+  function updateUI() {
+    processBtn.disabled = files.length === 0;
+    if (files.length) {
+      dropZone.querySelector('p strong').textContent =
+        `${files.length} 件選択中 — クリックで追加`;
+    } else {
+      dropZone.querySelector('p strong').textContent =
+        'クリックして画像を選択';
+    }
+  }
+
+  // ------- Presets -------
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      widthInput.value = btn.dataset.w;
+      heightInput.value = btn.dataset.h;
+    });
+  });
+
+  // ------- Background field visibility -------
+  function updateBgFieldVisibility() {
+    const needsBg = modeSelect.value === 'contain';
+    bgField.style.opacity = needsBg ? '1' : '0.4';
+    bgField.style.pointerEvents = needsBg ? 'auto' : 'none';
+  }
+  modeSelect.addEventListener('change', updateBgFieldVisibility);
+  updateBgFieldVisibility();
+
+  bgTransparent.addEventListener('change', () => {
+    bgColor.disabled = bgTransparent.checked;
+  });
+
+  // ------- Processing -------
+  processBtn.addEventListener('click', async () => {
+    const w = parseInt(widthInput.value, 10);
+    const h = parseInt(heightInput.value, 10);
+    if (!w || !h || w < 1 || h < 1) {
+      alert('幅と高さを正しく入力してください');
+      return;
+    }
+    processBtn.disabled = true;
+    processBtn.textContent = '処理中...';
+
+    processed = [];
+    resultsDiv.innerHTML = '';
+    resultsCard.classList.remove('hidden');
+
+    const mode = modeSelect.value;
+    const format = formatSelect.value;
+    const quality = Math.min(100, Math.max(1, parseInt(qualityInput.value, 10) || 92)) / 100;
+    const useTransparent = bgTransparent.checked && format !== 'image/jpeg';
+    const bg = useTransparent ? null : bgColor.value;
+
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const result = await processImage(files[i], w, h, mode, format, quality, bg);
+        result.id = `r${Date.now()}_${i}`;
+        processed.push(result);
+        renderResult(result);
+      } catch (err) {
+        console.error(err);
+        renderError(files[i], err);
+      }
+    }
+
+    processBtn.disabled = false;
+    processBtn.textContent = 'トリミング実行';
+    downloadAllBtn.classList.toggle('hidden', processed.length === 0);
+    clearBtn.classList.remove('hidden');
+    statsDiv.textContent = `${processed.length} / ${files.length} 件を処理しました`;
+  });
+
+  function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => resolve({ img, url });
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('画像の読み込みに失敗しました'));
+      };
+      img.src = url;
+    });
+  }
+
+  function computeInitialTransform(iw, ih, tw, th, mode) {
+    let scale;
+    if (mode === 'stretch') {
+      // Represent stretch as non-uniform: we return uniform scale but mark stretch separately
+      // For simplicity in the editor, fall back to cover-like behavior if edited
+      scale = Math.max(tw / iw, th / ih);
+    } else if (mode === 'cover') {
+      scale = Math.max(tw / iw, th / ih);
+    } else {
+      scale = Math.min(tw / iw, th / ih);
+    }
+    const dw = iw * scale;
+    const dh = ih * scale;
+    return {
+      scale,
+      offsetX: (tw - dw) / 2,
+      offsetY: (th - dh) / 2,
+    };
+  }
+
+  function renderToCanvas(img, tw, th, transform, bg, mode) {
+    const canvas = document.createElement('canvas');
+    canvas.width = tw;
+    canvas.height = th;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    if (bg !== null) {
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, tw, th);
+    }
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    if (mode === 'stretch' && !transform.edited) {
+      ctx.drawImage(img, 0, 0, tw, th);
+    } else {
+      const dw = iw * transform.scale;
+      const dh = ih * transform.scale;
+      ctx.drawImage(img, 0, 0, iw, ih, transform.offsetX, transform.offsetY, dw, dh);
+    }
+    return canvas;
+  }
+
+  function canvasToBlob(canvas, format, quality) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(blob => {
+        if (!blob) return reject(new Error('画像の生成に失敗しました'));
+        resolve(blob);
+      }, format, format === 'image/png' ? undefined : quality);
+    });
+  }
+
+  async function processImage(file, tw, th, mode, format, quality, bg) {
+    const { img, url } = await loadImage(file);
+    try {
+      const iw = img.naturalWidth;
+      const ih = img.naturalHeight;
+      const transform = computeInitialTransform(iw, ih, tw, th, mode);
+      const canvas = renderToCanvas(img, tw, th, transform, bg, mode);
+      const blob = await canvasToBlob(canvas, format, quality);
+      const baseName = file.name.replace(/\.[^.]+$/, '');
+      const ext = format === 'image/jpeg' ? 'jpg'
+        : format === 'image/png' ? 'png' : 'webp';
+      return {
+        name: `${baseName}_${tw}x${th}.${ext}`,
+        blob,
+        url: URL.createObjectURL(blob),
+        size: blob.size,
+        w: tw,
+        h: th,
+        originalName: file.name,
+        originalSize: file.size,
+        originalW: iw,
+        originalH: ih,
+        // Edit state
+        file,
+        img,
+        imgObjectUrl: url,
+        transform,
+        mode,
+        format,
+        quality,
+        bg,
+      };
+    } catch (err) {
+      URL.revokeObjectURL(url);
+      throw err;
+    }
+  }
+
+  function renderResult(r) {
+    const item = document.createElement('div');
+    item.className = 'result-item';
+    item.dataset.id = r.id;
+    item.innerHTML = `
+      <div class="result-thumb"><img src="${r.url}" alt=""></div>
+      <div class="result-info">
+        <div class="result-name" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</div>
+        <div class="result-meta">${r.w}×${r.h} · ${formatBytes(r.size)}</div>
+        <div style="font-size:11px; opacity:0.8;">元: ${r.originalW}×${r.originalH} · ${formatBytes(r.originalSize)}</div>
+      </div>
+      <div class="result-actions">
+        <button class="btn btn-secondary edit">編集</button>
+        <button class="btn btn-primary dl">保存</button>
+      </div>
+    `;
+    item.querySelector('.dl').addEventListener('click', () => downloadBlob(r.blob, r.name));
+    item.querySelector('.edit').addEventListener('click', () => openEditor(r));
+    resultsDiv.appendChild(item);
+  }
+
+  function updateResultItem(r) {
+    const item = resultsDiv.querySelector(`.result-item[data-id="${r.id}"]`);
+    if (!item) return;
+    const imgEl = item.querySelector('.result-thumb img');
+    imgEl.src = r.url;
+    const meta = item.querySelector('.result-meta');
+    if (meta) meta.textContent = `${r.w}×${r.h} · ${formatBytes(r.size)}`;
+  }
+
+  function renderError(file, err) {
+    const item = document.createElement('div');
+    item.className = 'result-item';
+    item.innerHTML = `
+      <div class="result-thumb" style="color:var(--danger); font-size:12px; padding:12px; text-align:center;">
+        エラー<br>${escapeHtml(err.message || 'unknown')}
+      </div>
+      <div class="result-info">
+        <div class="result-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</div>
+      </div>
+    `;
+    resultsDiv.appendChild(item);
+  }
+
+  downloadAllBtn.addEventListener('click', async () => {
+    // Sequential downloads
+    for (const r of processed) {
+      downloadBlob(r.blob, r.name);
+      await new Promise(res => setTimeout(res, 120));
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    files = [];
+    processed.forEach(r => {
+      URL.revokeObjectURL(r.url);
+      if (r.imgObjectUrl) URL.revokeObjectURL(r.imgObjectUrl);
+    });
+    processed = [];
+    resultsDiv.innerHTML = '';
+    resultsCard.classList.add('hidden');
+    downloadAllBtn.classList.add('hidden');
+    clearBtn.classList.add('hidden');
+    fileInput.value = '';
+    updateUI();
+  });
+
+  // ---------------- Editor ----------------
+  const editorModal = document.getElementById('editorModal');
+  const editorTitle = document.getElementById('editorTitle');
+  const editorCanvas = document.getElementById('editorCanvas');
+  const editorCanvasWrap = document.getElementById('editorCanvasWrap');
+  const zoomSlider = document.getElementById('zoomSlider');
+  const zoomVal = document.getElementById('zoomVal');
+  const editorFitCover = document.getElementById('editorFitCover');
+  const editorFitContain = document.getElementById('editorFitContain');
+  const editorCenter = document.getElementById('editorCenter');
+  const editorCancel = document.getElementById('editorCancel');
+  const editorApply = document.getElementById('editorApply');
+
+  const EDITOR_MAX_DISPLAY = 520; // max px for long side of preview
+
+  let editorState = null;
+  // { result, img, tw, th, bg, displayScale, displayW, displayH,
+  //   baseScale, minScale, maxScale, scale, offsetX, offsetY }
+
+  function openEditor(r) {
+    const iw = r.img.naturalWidth;
+    const ih = r.img.naturalHeight;
+    const tw = r.w;
+    const th = r.h;
+
+    // Display canvas size (preview) preserves target aspect ratio
+    const targetAspect = tw / th;
+    let displayW, displayH;
+    if (targetAspect >= 1) {
+      displayW = Math.min(EDITOR_MAX_DISPLAY, tw);
+      displayH = displayW / targetAspect;
+    } else {
+      displayH = Math.min(EDITOR_MAX_DISPLAY, th);
+      displayW = displayH * targetAspect;
+    }
+    const displayScale = displayW / tw;
+
+    // Base scale = cover (使える最大の最小値)。拡大率 100% は「ちょうど画面を埋める」状態。
+    const baseScale = Math.max(tw / iw, th / ih);
+    const minScale = Math.min(tw / iw, th / ih) * 0.5; // half of contain, allow lots of margin
+    const maxScale = baseScale * 5;
+
+    // Start from current transform
+    const cur = r.transform || computeInitialTransform(iw, ih, tw, th, r.mode);
+
+    editorState = {
+      result: r,
+      img: r.img,
+      iw, ih, tw, th,
+      bg: r.bg,
+      mode: r.mode,
+      displayW, displayH, displayScale,
+      baseScale, minScale, maxScale,
+      scale: cur.scale,
+      offsetX: cur.offsetX,
+      offsetY: cur.offsetY,
+    };
+
+    editorTitle.textContent = `位置・サイズを調整 — ${tw}×${th}`;
+    editorCanvas.width = Math.round(displayW);
+    editorCanvas.height = Math.round(displayH);
+    editorCanvasWrap.style.width = Math.round(displayW) + 'px';
+    editorCanvasWrap.style.height = Math.round(displayH) + 'px';
+
+    updateZoomSlider();
+    drawEditor();
+    editorModal.classList.remove('hidden');
+  }
+
+  function closeEditor() {
+    editorModal.classList.add('hidden');
+    editorState = null;
+  }
+
+  function updateZoomSlider() {
+    if (!editorState) return;
+    const pct = Math.round((editorState.scale / editorState.baseScale) * 100);
+    zoomSlider.min = Math.round((editorState.minScale / editorState.baseScale) * 100);
+    zoomSlider.max = Math.round((editorState.maxScale / editorState.baseScale) * 100);
+    zoomSlider.value = pct;
+    zoomVal.textContent = pct + '%';
+  }
+
+  function drawEditor() {
+    if (!editorState) return;
+    const s = editorState;
+    const ctx = editorCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
+    if (s.bg !== null) {
+      ctx.fillStyle = s.bg;
+      ctx.fillRect(0, 0, editorCanvas.width, editorCanvas.height);
+    }
+    const dw = s.iw * s.scale * s.displayScale;
+    const dh = s.ih * s.scale * s.displayScale;
+    const dx = s.offsetX * s.displayScale;
+    const dy = s.offsetY * s.displayScale;
+    ctx.drawImage(s.img, 0, 0, s.iw, s.ih, dx, dy, dw, dh);
+  }
+
+  // Zoom slider
+  zoomSlider.addEventListener('input', () => {
+    if (!editorState) return;
+    const pct = parseInt(zoomSlider.value, 10);
+    const newScale = editorState.baseScale * (pct / 100);
+    setScaleAnchored(newScale, editorState.tw / 2, editorState.th / 2);
+    zoomVal.textContent = pct + '%';
+    drawEditor();
+  });
+
+  function setScaleAnchored(newScale, anchorX_target, anchorY_target) {
+    const s = editorState;
+    // Keep the target-space anchor point visually stable:
+    // anchor_target = offset + img_coord * scale
+    // img_coord = (anchor_target - offset) / scale
+    // After scale change, new offset = anchor_target - img_coord * newScale
+    const imgX = (anchorX_target - s.offsetX) / s.scale;
+    const imgY = (anchorY_target - s.offsetY) / s.scale;
+    s.scale = clamp(newScale, s.minScale, s.maxScale);
+    s.offsetX = anchorX_target - imgX * s.scale;
+    s.offsetY = anchorY_target - imgY * s.scale;
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // Wheel zoom
+  editorCanvas.addEventListener('wheel', (e) => {
+    if (!editorState) return;
+    e.preventDefault();
+    const rect = editorCanvas.getBoundingClientRect();
+    const cx_display = e.clientX - rect.left;
+    const cy_display = e.clientY - rect.top;
+    const cx_target = cx_display / editorState.displayScale;
+    const cy_target = cy_display / editorState.displayScale;
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    setScaleAnchored(editorState.scale * factor, cx_target, cy_target);
+    updateZoomSlider();
+    drawEditor();
+  }, { passive: false });
+
+  // Drag
+  let dragState = null;
+  function onPointerDown(e) {
+    if (!editorState) return;
+    const p = pointerPos(e);
+    dragState = {
+      startX: p.x,
+      startY: p.y,
+      startOffsetX: editorState.offsetX,
+      startOffsetY: editorState.offsetY,
+      pointerId: e.pointerId,
+    };
+    editorCanvasWrap.classList.add('dragging');
+    editorCanvasWrap.setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e) {
+    if (!dragState || !editorState) return;
+    const p = pointerPos(e);
+    const dx_display = p.x - dragState.startX;
+    const dy_display = p.y - dragState.startY;
+    editorState.offsetX = dragState.startOffsetX + dx_display / editorState.displayScale;
+    editorState.offsetY = dragState.startOffsetY + dy_display / editorState.displayScale;
+    drawEditor();
+  }
+  function onPointerUp(e) {
+    if (!dragState) return;
+    editorCanvasWrap.classList.remove('dragging');
+    try { editorCanvasWrap.releasePointerCapture(dragState.pointerId); } catch (_) {}
+    dragState = null;
+  }
+  function pointerPos(e) {
+    const rect = editorCanvasWrap.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+  editorCanvasWrap.addEventListener('pointerdown', onPointerDown);
+  editorCanvasWrap.addEventListener('pointermove', onPointerMove);
+  editorCanvasWrap.addEventListener('pointerup', onPointerUp);
+  editorCanvasWrap.addEventListener('pointercancel', onPointerUp);
+
+  // Fit buttons
+  editorFitCover.addEventListener('click', () => {
+    if (!editorState) return;
+    const s = editorState;
+    s.scale = Math.max(s.tw / s.iw, s.th / s.ih);
+    s.offsetX = (s.tw - s.iw * s.scale) / 2;
+    s.offsetY = (s.th - s.ih * s.scale) / 2;
+    updateZoomSlider();
+    drawEditor();
+  });
+  editorFitContain.addEventListener('click', () => {
+    if (!editorState) return;
+    const s = editorState;
+    s.scale = Math.min(s.tw / s.iw, s.th / s.ih);
+    s.offsetX = (s.tw - s.iw * s.scale) / 2;
+    s.offsetY = (s.th - s.ih * s.scale) / 2;
+    updateZoomSlider();
+    drawEditor();
+  });
+  editorCenter.addEventListener('click', () => {
+    if (!editorState) return;
+    const s = editorState;
+    s.offsetX = (s.tw - s.iw * s.scale) / 2;
+    s.offsetY = (s.th - s.ih * s.scale) / 2;
+    drawEditor();
+  });
+
+  // Cancel / Apply
+  editorCancel.addEventListener('click', closeEditor);
+  editorModal.addEventListener('click', (e) => {
+    if (e.target === editorModal) closeEditor();
+  });
+
+  editorApply.addEventListener('click', async () => {
+    if (!editorState) return;
+    const s = editorState;
+    const r = s.result;
+    const transform = {
+      scale: s.scale,
+      offsetX: s.offsetX,
+      offsetY: s.offsetY,
+      edited: true,
+    };
+    const canvas = renderToCanvas(s.img, s.tw, s.th, transform, s.bg, s.mode);
+    try {
+      const blob = await canvasToBlob(canvas, r.format, r.quality);
+      URL.revokeObjectURL(r.url);
+      r.blob = blob;
+      r.size = blob.size;
+      r.url = URL.createObjectURL(blob);
+      r.transform = transform;
+      updateResultItem(r);
+      closeEditor();
+    } catch (err) {
+      console.error(err);
+      alert('画像の更新に失敗しました: ' + err.message);
+    }
+  });
+
+  // Esc to close
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !editorModal.classList.contains('hidden')) {
+      closeEditor();
+    }
+  });
+
+  function downloadBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(2)} MB`;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+})();
+</script>
+</body>
+</html>
