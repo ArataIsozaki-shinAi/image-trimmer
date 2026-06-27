@@ -205,8 +205,10 @@
   .result-actions { display: flex; gap: 6px; padding: 8px 12px 12px; }
   .result-actions button {
     flex: 1;
-    padding: 6px 8px;
+    min-width: 0;
+    padding: 6px 4px;
     font-size: 12px;
+    white-space: nowrap;
     border-radius: 6px;
   }
   .hidden { display: none !important; }
@@ -1137,14 +1139,16 @@
         <div style="font-size:11px;">元: ${r.originalW}×${r.originalH} · ${formatBytes(r.originalSize)}</div>
       </div>
       <div class="result-actions">
+        <button class="btn btn-secondary rename" aria-label="${escapeHtml(r.name)} の名前を変更">名前変更</button>
         <button class="btn btn-secondary edit" aria-label="${escapeHtml(r.name)} を編集">編集</button>
         <button class="btn btn-primary dl" aria-label="${escapeHtml(r.name)} を保存">保存</button>
       </div>
     `;
     item.querySelector('.dl').addEventListener('click', () => downloadBlob(r.blob, r.name));
     item.querySelector('.edit').addEventListener('click', () => openEditor(r));
+    item.querySelector('.rename').addEventListener('click', () => startRename(item, r));
     const nameEl = item.querySelector('.result-name');
-    nameEl.title = 'クリックで名前を変更';
+    nameEl.title = 'クリック、または「名前変更」ボタンで変更';
     nameEl.addEventListener('click', () => startRename(item, r));
     resultsDiv.appendChild(item);
   }
@@ -1174,15 +1178,17 @@
       }
       const newNameEl = document.createElement('div');
       newNameEl.className = 'result-name';
-      newNameEl.title = 'クリックで名前を変更';
+      newNameEl.title = 'クリック、または「名前変更」ボタンで変更';
       newNameEl.textContent = r.name;
       input.replaceWith(newNameEl);
       newNameEl.addEventListener('click', () => startRename(item, r));
       // keep aria-labels of action buttons in sync
       const dl = item.querySelector('.dl');
       const ed = item.querySelector('.edit');
+      const rn = item.querySelector('.rename');
       if (dl) dl.setAttribute('aria-label', `${r.name} を保存`);
       if (ed) ed.setAttribute('aria-label', `${r.name} を編集`);
+      if (rn) rn.setAttribute('aria-label', `${r.name} の名前を変更`);
       const img = item.querySelector('.result-thumb img');
       if (img) img.alt = r.name;
     };
