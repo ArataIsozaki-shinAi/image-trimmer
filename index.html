@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>画像自動トリミング</title>
+<!-- Google Identity Services (OAuth token client for Drive upload) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
     --bg: #f5f5f7;
@@ -405,6 +407,113 @@
     70% { transform: scale(1.04); opacity: 0.3; }
     100% { transform: scale(1.04); opacity: 0; }
   }
+
+  /* ---- Field hint / rename ---- */
+  .field-hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .field-hint code {
+    background: #f0f0f3;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+    font-size: 11px;
+  }
+  .result-name { cursor: text; }
+  .result-name:hover { text-decoration: underline dotted; }
+  .result-name-input {
+    width: 100%;
+    font: inherit;
+    font-size: 12px;
+    padding: 2px 4px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+  }
+
+  /* ---- Google Drive card ---- */
+  .drive-card { padding: 0; }
+  .drive-summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+    font-weight: 600;
+  }
+  .drive-summary::-webkit-details-marker { display: none; }
+  .drive-summary::after {
+    content: '▸';
+    margin-left: auto;
+    color: var(--muted);
+    transition: transform 0.2s;
+  }
+  details[open] .drive-summary::after { transform: rotate(90deg); }
+  .drive-status {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: #f0f0f3;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .drive-status.connected { background: #e6f7ec; color: #1a7f37; }
+  .drive-status.error { background: #fde8e8; color: var(--danger-text); }
+  .drive-body {
+    padding: 0 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .drive-body .field input[type=text] {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  .drive-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .drive-help {
+    background: #f7f7fa;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .drive-help ol { margin: 8px 0 0; padding-left: 20px; }
+  .drive-help li { margin-bottom: 6px; }
+  .drive-help code {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 5px;
+    font-size: 12px;
+    word-break: break-all;
+  }
+
+  /* ---- Toast ---- */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(8px);
+    background: #1d1d1f;
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: 14px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+    z-index: 3000;
+    opacity: 0;
+    transition: opacity 0.25s, transform 0.25s;
+    max-width: calc(100vw - 32px);
+    text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.toast-error { background: #b00020; }
+  .toast.toast-success { background: #1a7f37; }
 </style>
 </head>
 <body>
@@ -482,9 +591,16 @@
       <button class="preset-btn" data-w="400" data-h="400">サムネ (400×400)</button>
     </div>
 
+    <div class="field" style="margin-top:14px;">
+      <label for="namePattern">ファイル名パターン</label>
+      <input type="text" id="namePattern" value="{name}_{w}x{h}" placeholder="{name}_{w}x{h}" autocomplete="off" spellcheck="false">
+      <span class="field-hint">トークン: <code>{name}</code> 元の名前 / <code>{w}</code> 幅 / <code>{h}</code> 高さ / <code>{index}</code> 連番（拡張子は自動付与・各カードで個別変更も可）</span>
+    </div>
+
     <div class="actions">
       <button id="processBtn" class="btn btn-primary" disabled>トリミング実行</button>
       <button id="downloadAllBtn" class="btn btn-secondary hidden">すべてZIPで保存</button>
+      <button id="driveSaveBtn" class="btn btn-secondary hidden">Driveに保存</button>
       <button id="clearBtn" class="btn btn-danger hidden">クリア</button>
     </div>
   </div>
@@ -494,7 +610,48 @@
     <div id="stats" class="stats" role="status" aria-live="polite"></div>
     <div id="results" class="results"></div>
   </div>
+
+  <details id="driveCard" class="card drive-card">
+    <summary class="drive-summary">
+      <span>☁️ Googleドライブ連携</span>
+      <span id="driveStatus" class="drive-status">未接続</span>
+    </summary>
+    <div class="drive-body">
+      <div class="field">
+        <label for="driveClientId">OAuth クライアントID</label>
+        <input type="text" id="driveClientId" placeholder="0000000000-xxxxxxxx.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+        <span class="field-hint">Google Cloud で作成した「ウェブ アプリケーション」用の<strong>クライアントID（公開情報・シークレットではありません）</strong>を貼り付けてください。<a id="driveHelpLink" href="#">作成手順を表示</a></span>
+      </div>
+      <div class="field">
+        <label for="driveFolder">保存先フォルダ名 (Drive内に自動作成)</label>
+        <input type="text" id="driveFolder" value="画像トリミング" autocomplete="off">
+      </div>
+      <label class="checkbox-row" style="gap:8px;">
+        <input type="checkbox" id="driveAutoSave">
+        <span style="font-size:14px;">トリミング処理後に自動でDriveへ保存する</span>
+      </label>
+      <div class="drive-actions">
+        <button id="driveConnectBtn" class="btn btn-primary" type="button">接続</button>
+        <button id="driveDisconnectBtn" class="btn btn-secondary hidden" type="button">切断</button>
+      </div>
+      <div id="driveHelp" class="drive-help hidden">
+        <strong>OAuth クライアントID の作成手順</strong>
+        <ol>
+          <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> でプロジェクトを作成（無料）</li>
+          <li>「APIとサービス」→「ライブラリ」で <strong>Google Drive API</strong> を有効化</li>
+          <li>「OAuth同意画面」を構成: User Type =「外部」、アプリ名等を入力。スコープに <code>.../auth/drive.file</code> を追加し、テストユーザーに自分のGoogleアカウントを追加（公開は不要・「テスト」のままでOK）</li>
+          <li>「認証情報」→「認証情報を作成」→「OAuth クライアント ID」→ 種類「<strong>ウェブ アプリケーション</strong>」</li>
+          <li>「承認済みの JavaScript 生成元」に <code>https://arataisozaki-shinai.github.io</code> を追加（保存）</li>
+          <li>表示された <strong>クライアントID</strong> をコピーし、上の欄に貼り付けて「接続」</li>
+        </ol>
+        ※ アクセス範囲は <code>drive.file</code>（このアプリが作成したファイルのみ）に限定。画像はブラウザから直接 Google にアップロードされ、当サイトのサーバーには送信されません。<br>
+        ※ OAuthはHTTPSが必須のため、ローカルの <code>file://</code> では動作しません（本番URLでご利用ください）。
+      </div>
+    </div>
+  </details>
 </div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <!-- Tutorial (spotlight-style) -->
 <div id="tutorialOverlay" class="tutorial-overlay hidden">
@@ -566,6 +723,18 @@
   const resultsCard = document.getElementById('resultsCard');
   const resultsDiv = document.getElementById('results');
   const statsDiv = document.getElementById('stats');
+  const namePattern = document.getElementById('namePattern');
+  const driveSaveBtn = document.getElementById('driveSaveBtn');
+  const toastEl = document.getElementById('toast');
+  // Google Drive UI
+  const driveClientId = document.getElementById('driveClientId');
+  const driveFolder = document.getElementById('driveFolder');
+  const driveAutoSave = document.getElementById('driveAutoSave');
+  const driveConnectBtn = document.getElementById('driveConnectBtn');
+  const driveDisconnectBtn = document.getElementById('driveDisconnectBtn');
+  const driveStatus = document.getElementById('driveStatus');
+  const driveHelp = document.getElementById('driveHelp');
+  const driveHelpLink = document.getElementById('driveHelpLink');
 
   let files = [];
   const filePreviews = new Map(); // File -> object URL (thumbnail), released on remove/clear
@@ -737,7 +906,7 @@
 
   // ------- Settings persistence (localStorage) -------
   const SETTINGS_KEY = 'imageTrimmer_settings_v1';
-  const settingInputs = [widthInput, heightInput, modeSelect, formatSelect, qualityInput, bgColor, bgTransparent];
+  const settingInputs = [widthInput, heightInput, modeSelect, formatSelect, qualityInput, bgColor, bgTransparent, namePattern];
 
   function saveSettings() {
     try {
@@ -749,6 +918,7 @@
         quality: qualityInput.value,
         bgColor: bgColor.value,
         bgTransparent: bgTransparent.checked,
+        namePattern: namePattern.value,
       }));
     } catch (_) {}
   }
@@ -764,6 +934,7 @@
     if (s.quality != null) qualityInput.value = s.quality;
     if (s.bgColor != null) bgColor.value = s.bgColor;
     if (s.bgTransparent != null) bgTransparent.checked = s.bgTransparent;
+    if (s.namePattern != null) namePattern.value = s.namePattern;
   }
 
   settingInputs.forEach(el => el.addEventListener('change', saveSettings));
@@ -796,6 +967,7 @@
     // Snapshot the selection so any concurrent add/remove can't disturb this batch
     const batch = files.slice();
     const total = batch.length;
+    const pattern = namePattern.value;
     let errCount = 0;
     statsDiv.textContent = `処理中… (0 / ${total})`;
 
@@ -803,6 +975,10 @@
       try {
         const result = await processImage(batch[i], w, h, mode, format, quality, bg);
         result.id = `r${Date.now()}_${i}`;
+        result.index = i + 1;
+        result.name = buildName(pattern, {
+          name: result.baseName, w: result.w, h: result.h, index: i + 1, total, ext: result.ext,
+        });
         processed.push(result);
         renderResult(result);
       } catch (err) {
@@ -817,10 +993,15 @@
     clearBtn.disabled = false;
     processBtn.textContent = 'トリミング実行';
     downloadAllBtn.classList.toggle('hidden', processed.length === 0);
+    driveSaveBtn.classList.toggle('hidden', processed.length === 0);
     clearBtn.classList.remove('hidden');
     statsDiv.textContent = errCount
       ? `${processed.length} / ${total} 件を処理しました（${errCount} 件失敗）`
       : `${processed.length} / ${total} 件を処理しました`;
+
+    if (processed.length && driveAutoSave.checked) {
+      maybeAutoSaveToDrive();
+    }
   });
 
   function releaseProcessed() {
@@ -908,6 +1089,8 @@
         : format === 'image/png' ? 'png' : 'webp';
       return {
         name: `${baseName}_${tw}x${th}.${ext}`,
+        baseName,
+        ext,
         blob,
         url: URL.createObjectURL(blob),
         size: blob.size,
@@ -950,7 +1133,54 @@
     `;
     item.querySelector('.dl').addEventListener('click', () => downloadBlob(r.blob, r.name));
     item.querySelector('.edit').addEventListener('click', () => openEditor(r));
+    const nameEl = item.querySelector('.result-name');
+    nameEl.title = 'クリックで名前を変更';
+    nameEl.addEventListener('click', () => startRename(item, r));
     resultsDiv.appendChild(item);
+  }
+
+  // Inline rename of a single result (extension stays fixed to match the blob format)
+  function startRename(item, r) {
+    const nameEl = item.querySelector('.result-name');
+    if (!nameEl || item.querySelector('.result-name-input')) return;
+    const dot = r.name.lastIndexOf('.');
+    const stem = dot === -1 ? r.name : r.name.slice(0, dot);
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'result-name-input';
+    input.value = stem;
+    input.setAttribute('aria-label', 'ファイル名（拡張子なし）');
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const commit = (save) => {
+      if (done) return;
+      done = true;
+      if (save) {
+        const clean = sanitizeName(input.value);
+        if (clean) r.name = `${clean}.${r.ext}`;
+      }
+      const newNameEl = document.createElement('div');
+      newNameEl.className = 'result-name';
+      newNameEl.title = 'クリックで名前を変更';
+      newNameEl.textContent = r.name;
+      input.replaceWith(newNameEl);
+      newNameEl.addEventListener('click', () => startRename(item, r));
+      // keep aria-labels of action buttons in sync
+      const dl = item.querySelector('.dl');
+      const ed = item.querySelector('.edit');
+      if (dl) dl.setAttribute('aria-label', `${r.name} を保存`);
+      if (ed) ed.setAttribute('aria-label', `${r.name} を編集`);
+      const img = item.querySelector('.result-thumb img');
+      if (img) img.alt = r.name;
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
+    });
+    input.addEventListener('blur', () => commit(true));
   }
 
   function updateResultItem(r) {
@@ -1019,6 +1249,7 @@
     resultsDiv.innerHTML = '';
     resultsCard.classList.add('hidden');
     downloadAllBtn.classList.add('hidden');
+    driveSaveBtn.classList.add('hidden');
     clearBtn.classList.add('hidden');
     fileInput.value = '';
     updateUI();
@@ -1654,6 +1885,315 @@
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
   }
+
+  // ---------------- Filename helpers ----------------
+  function sanitizeName(s) {
+    return String(s)
+      .replace(/[\u0000-\u001f\/\\:*?"<>|]/g, '') // strip control + illegal filename chars (keeps spaces/hyphens)
+      .replace(/\s+/g, ' ')
+      .replace(/^\.+/, '')
+      .trim()
+      .slice(0, 120);
+  }
+
+  function buildName(pattern, ctx) {
+    const pad = String(ctx.total || 1).length;
+    const idxPadded = String(ctx.index).padStart(pad, '0');
+    const tpl = (pattern && pattern.trim()) ? pattern : '{name}_{w}x{h}';
+    // Single-pass replacement: a function replacer treats $ literally and prevents
+    // re-expanding tokens that happen to appear inside the original filename.
+    const map = {
+      name: String(ctx.name),
+      w: String(ctx.w),
+      h: String(ctx.h),
+      index: idxPadded,
+      n: String(ctx.index),
+    };
+    let stem = tpl.replace(/\{(name|w|h|index|n)\}/g, (_, k) => map[k]);
+    stem = sanitizeName(stem);
+    if (!stem) stem = sanitizeName(ctx.name) || 'image';
+    return `${stem}.${ctx.ext}`;
+  }
+
+  // ---------------- Toast ----------------
+  let toastTimer = null;
+  function notify(message, type) {
+    toastEl.textContent = message;
+    toastEl.className = 'toast show' + (type ? ` toast-${type}` : '');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), type === 'error' ? 5000 : 3000);
+  }
+
+  // ---------------- Google Drive (OAuth via GIS + Drive REST) ----------------
+  const DRIVE_KEY = 'imageTrimmer_drive_v1';
+  const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+  const driveCard = document.getElementById('driveCard');
+  let tokenClient = null;
+  let accessToken = null;
+  let tokenExpiry = 0;
+  let driveFolderId = null;
+  let driveFolderName = null;
+  let driveBusy = false;
+  let pendingTokenReject = null; // lets error_callback reject the in-flight token request
+  let tokenInFlight = null;      // dedupes concurrent token requests
+
+  function saveDriveConfig() {
+    try {
+      localStorage.setItem(DRIVE_KEY, JSON.stringify({
+        clientId: driveClientId.value.trim(),
+        folder: driveFolder.value.trim(),
+        autoSave: driveAutoSave.checked,
+      }));
+    } catch (_) {}
+  }
+  function restoreDriveConfig() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(DRIVE_KEY) || 'null'); } catch (_) {}
+    if (!s) return;
+    if (s.clientId != null) driveClientId.value = s.clientId;
+    if (s.folder) driveFolder.value = s.folder;
+    if (s.autoSave != null) driveAutoSave.checked = s.autoSave;
+  }
+
+  function gisReady() {
+    return typeof google !== 'undefined' && google.accounts && google.accounts.oauth2;
+  }
+  function setDriveStatus(text, state) {
+    driveStatus.textContent = text;
+    driveStatus.className = 'drive-status' + (state ? ` ${state}` : '');
+  }
+  function isConnected() {
+    return !!(tokenClient && accessToken && Date.now() < tokenExpiry - 60000);
+  }
+  function updateDriveUI() {
+    if (isConnected()) {
+      setDriveStatus('接続済み', 'connected');
+      driveConnectBtn.classList.add('hidden');
+      driveDisconnectBtn.classList.remove('hidden');
+    } else {
+      setDriveStatus('未接続');
+      driveConnectBtn.classList.remove('hidden');
+      driveDisconnectBtn.classList.add('hidden');
+    }
+  }
+
+  function ensureTokenClient() {
+    const clientId = driveClientId.value.trim();
+    if (!clientId) { notify('クライアントIDを入力してください', 'error'); return false; }
+    if (!gisReady()) { notify('Google認証ライブラリが未読み込みです（HTTPS/ネット接続をご確認ください）', 'error'); return false; }
+    if (!tokenClient || tokenClient._clientId !== clientId) {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: DRIVE_SCOPE,
+        callback: () => {},        // replaced per request
+        error_callback: (err) => { // popup closed / failed to open / etc.
+          if (pendingTokenReject) {
+            const rej = pendingTokenReject;
+            pendingTokenReject = null;
+            rej(new Error((err && err.type) ? `認証エラー: ${err.type}` : '認証がキャンセルされました'));
+          }
+        },
+      });
+      tokenClient._clientId = clientId;
+    }
+    return true;
+  }
+
+  function requestToken() {
+    if (accessToken && Date.now() < tokenExpiry - 60000) return Promise.resolve(accessToken);
+    // Reuse a single in-flight request so Connect + Save can't start two overlapping
+    // OAuth flows that overwrite the shared callback and cause a false timeout.
+    if (tokenInFlight) return tokenInFlight;
+    const p = new Promise((resolve, reject) => {
+      if (!ensureTokenClient()) return reject(new Error('未接続'));
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true; pendingTokenReject = null;
+        reject(new Error('認証がタイムアウトしました'));
+      }, 60000);
+      pendingTokenReject = (e) => {
+        if (settled) return;
+        settled = true; clearTimeout(timer);
+        reject(e);
+      };
+      tokenClient.callback = (resp) => {
+        if (settled) return;
+        settled = true; clearTimeout(timer); pendingTokenReject = null;
+        if (resp && resp.error) return reject(new Error(resp.error_description || resp.error));
+        accessToken = resp.access_token;
+        tokenExpiry = Date.now() + ((resp.expires_in || 3600) * 1000);
+        resolve(accessToken);
+      };
+      try {
+        // prompt:'' lets GIS stay silent for returning users and show consent only when needed
+        tokenClient.requestAccessToken({ prompt: '' });
+      } catch (e) {
+        if (!settled) { settled = true; clearTimeout(timer); pendingTokenReject = null; reject(e); }
+      }
+    });
+    tokenInFlight = p;
+    const clear = () => { tokenInFlight = null; };
+    p.then(clear, clear); // clear the in-flight slot on settle (no unhandled rejection)
+    return p;
+  }
+
+  async function driveFetch(url, options) {
+    const res = await fetch(url, options);
+    if (res.status === 401) {
+      accessToken = null; tokenExpiry = 0;
+      throw new Error('認証の有効期限が切れました。再接続してください');
+    }
+    if (!res.ok) {
+      let msg = `Drive APIエラー (${res.status})`;
+      try { const j = await res.json(); if (j.error && j.error.message) msg += `: ${j.error.message}`; } catch (_) {}
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  async function ensureFolder(token) {
+    const name = driveFolder.value.trim() || '画像トリミング';
+    if (driveFolderId && driveFolderName === name) return driveFolderId;
+    // Drive v3 query: escape backslashes first, then single quotes
+    const safe = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const q = `name='${safe}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const listed = await driveFetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (listed.files && listed.files.length) {
+      driveFolderId = listed.files[0].id;
+    } else {
+      const created = await driveFetch(
+        'https://www.googleapis.com/drive/v3/files?fields=id',
+        { method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' }) }
+      );
+      driveFolderId = created.id;
+    }
+    driveFolderName = name;
+    return driveFolderId;
+  }
+
+  async function driveUpload(blob, name, folderId, token) {
+    const boundary = '----imgtrim' + Date.now().toString(36) + Math.random().toString(36).slice(2);
+    const metadata = { name, parents: folderId ? [folderId] : undefined };
+    const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${blob.type || 'application/octet-stream'}\r\n\r\n`;
+    const tail = `\r\n--${boundary}--`;
+    const body = new Blob([head, blob, tail], { type: `multipart/related; boundary=${boundary}` });
+    return driveFetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',
+      { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body }
+    );
+  }
+
+  async function uploadResults(list, opts) {
+    const auto = opts && opts.auto;
+    if (driveBusy) { notify('Driveへの保存が進行中です', 'error'); return; }
+    if (!list.length) return;
+    driveBusy = true;
+    const origLabel = driveSaveBtn.textContent;
+    driveSaveBtn.disabled = true;
+    driveConnectBtn.disabled = true;
+    try {
+      const token = await requestToken(); // GIS stays silent for returning users; popup needs a gesture (manual/connect)
+      updateDriveUI();
+      const folderId = await ensureFolder(token);
+      const usedNames = new Set();
+      let ok = 0, fail = 0;
+      for (let i = 0; i < list.length; i++) {
+        const r = list[i];
+        const name = uniqueName(r.name, usedNames);
+        usedNames.add(name);
+        driveSaveBtn.textContent = `保存中… (${i + 1}/${list.length})`;
+        try {
+          await driveUpload(r.blob, name, folderId, token);
+          ok++;
+        } catch (e) {
+          console.error(e);
+          fail++;
+          if (/認証/.test(e.message)) throw e; // stop the batch on auth failure
+        }
+      }
+      if (fail) notify(`Driveへ ${ok} 件保存（${fail} 件失敗）`, ok ? 'success' : 'error');
+      else notify(`Driveの「${driveFolderName}」へ ${ok} 件保存しました`, 'success');
+    } catch (e) {
+      console.error(e);
+      const hint = auto ? '（自動保存には先に「接続」が必要です）' : '';
+      notify('Drive保存に失敗: ' + e.message + hint, 'error');
+      updateDriveUI();
+    } finally {
+      driveBusy = false;
+      driveSaveBtn.disabled = false;
+      driveConnectBtn.disabled = false;
+      driveSaveBtn.textContent = origLabel;
+    }
+  }
+
+  function maybeAutoSaveToDrive() {
+    if (!driveClientId.value.trim()) { notify('Drive自動保存: クライアントIDが未設定です', 'error'); return; }
+    uploadResults(processed.slice(), { auto: true });
+  }
+
+  // ---- Drive wiring ----
+  driveConnectBtn.addEventListener('click', async () => {
+    driveConnectBtn.disabled = true;
+    const prev = driveConnectBtn.textContent;
+    driveConnectBtn.textContent = '接続中…';
+    try {
+      const token = await requestToken();
+      await ensureFolder(token); // create/locate the folder up front
+      updateDriveUI();
+      notify('Googleドライブに接続しました', 'success');
+    } catch (e) {
+      console.error(e);
+      setDriveStatus('接続エラー', 'error');
+      notify('接続に失敗: ' + e.message, 'error');
+    } finally {
+      driveConnectBtn.disabled = false;
+      driveConnectBtn.textContent = prev;
+    }
+  });
+
+  driveDisconnectBtn.addEventListener('click', () => {
+    if (accessToken && gisReady()) {
+      try { google.accounts.oauth2.revoke(accessToken, () => {}); } catch (_) {}
+    }
+    accessToken = null; tokenExpiry = 0; driveFolderId = null; driveFolderName = null;
+    updateDriveUI();
+    notify('Driveの接続を解除しました');
+  });
+
+  driveSaveBtn.addEventListener('click', () => {
+    if (!processed.length) return;
+    if (!driveClientId.value.trim()) {
+      notify('クライアントIDを入力してください（下の「Googleドライブ連携」を開いて設定）', 'error');
+      if (driveCard) driveCard.open = true;
+      return;
+    }
+    uploadResults(processed.slice(), { auto: false });
+  });
+
+  driveHelpLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    driveHelp.classList.toggle('hidden');
+    driveHelpLink.textContent = driveHelp.classList.contains('hidden') ? '作成手順を表示' : '作成手順を隠す';
+  });
+
+  [driveClientId, driveFolder, driveAutoSave].forEach(el => el.addEventListener('change', () => {
+    saveDriveConfig();
+    if (el === driveClientId) {
+      // Client ID changed — reset the token client and any cached token/folder
+      tokenClient = null; accessToken = null; tokenExpiry = 0;
+      driveFolderId = null; driveFolderName = null;
+      updateDriveUI();
+    }
+  }));
+
+  restoreDriveConfig();
+  updateDriveUI();
 })();
 </script>
 </body>
