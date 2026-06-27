@@ -493,6 +493,27 @@
     word-break: break-all;
   }
 
+  /* ---- Google sign-in button ---- */
+  .gbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: #fff;
+    border: 1px solid #dadce0;
+    border-radius: 8px;
+    padding: 9px 18px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: #3c4043;
+    cursor: pointer;
+    transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+  }
+  .gbtn:hover { background: #f8faff; border-color: #d2e3fc; box-shadow: 0 1px 3px rgba(60,64,67,0.2); }
+  .gbtn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,113,227,0.2); }
+  .gbtn:disabled { opacity: 0.6; cursor: default; }
+  .gbtn-icon { width: 18px; height: 18px; display: block; flex-shrink: 0; }
+
   /* ---- Toast ---- */
   .toast {
     position: fixed;
@@ -614,14 +635,10 @@
   <details id="driveCard" class="card drive-card">
     <summary class="drive-summary">
       <span>☁️ Googleドライブ連携</span>
-      <span id="driveStatus" class="drive-status">未接続</span>
+      <span id="driveStatus" class="drive-status">未ログイン</span>
     </summary>
     <div class="drive-body">
-      <div class="field">
-        <label for="driveClientId">OAuth クライアントID</label>
-        <input type="text" id="driveClientId" placeholder="0000000000-xxxxxxxx.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
-        <span class="field-hint">Google Cloud で作成した「ウェブ アプリケーション」用の<strong>クライアントID（公開情報・シークレットではありません）</strong>を貼り付けてください。<a id="driveHelpLink" href="#">作成手順を表示</a></span>
-      </div>
+      <p class="field-hint" style="margin:0;">Googleアカウントでログインすると、処理した画像をドライブに保存できます。アクセス範囲はこのアプリが作成するフォルダのみ（<code>drive.file</code>）で、他のファイルには一切アクセスしません。</p>
       <div class="field">
         <label for="driveFolder">保存先フォルダ名 (Drive内に自動作成)</label>
         <input type="text" id="driveFolder" value="画像トリミング" autocomplete="off">
@@ -631,21 +648,16 @@
         <span style="font-size:14px;">トリミング処理後に自動でDriveへ保存する</span>
       </label>
       <div class="drive-actions">
-        <button id="driveConnectBtn" class="btn btn-primary" type="button">接続</button>
-        <button id="driveDisconnectBtn" class="btn btn-secondary hidden" type="button">切断</button>
-      </div>
-      <div id="driveHelp" class="drive-help hidden">
-        <strong>OAuth クライアントID の作成手順</strong>
-        <ol>
-          <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> でプロジェクトを作成（無料）</li>
-          <li>「APIとサービス」→「ライブラリ」で <strong>Google Drive API</strong> を有効化</li>
-          <li>「OAuth同意画面」を構成: User Type =「外部」、アプリ名等を入力。スコープに <code>.../auth/drive.file</code> を追加し、テストユーザーに自分のGoogleアカウントを追加（公開は不要・「テスト」のままでOK）</li>
-          <li>「認証情報」→「認証情報を作成」→「OAuth クライアント ID」→ 種類「<strong>ウェブ アプリケーション</strong>」</li>
-          <li>「承認済みの JavaScript 生成元」に <code>https://arataisozaki-shinai.github.io</code> を追加（保存）</li>
-          <li>表示された <strong>クライアントID</strong> をコピーし、上の欄に貼り付けて「接続」</li>
-        </ol>
-        ※ アクセス範囲は <code>drive.file</code>（このアプリが作成したファイルのみ）に限定。画像はブラウザから直接 Google にアップロードされ、当サイトのサーバーには送信されません。<br>
-        ※ OAuthはHTTPSが必須のため、ローカルの <code>file://</code> では動作しません（本番URLでご利用ください）。
+        <button id="driveConnectBtn" class="gbtn" type="button">
+          <svg class="gbtn-icon" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+            <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.71H.96v2.33A9 9 0 0 0 9 18z"/>
+            <path fill="#FBBC05" d="M3.97 10.71a5.41 5.41 0 0 1 0-3.42V4.96H.96a9 9 0 0 0 0 8.08l3.01-2.33z"/>
+            <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+          </svg>
+          <span>Googleでログイン</span>
+        </button>
+        <button id="driveDisconnectBtn" class="btn btn-secondary hidden" type="button">ログアウト</button>
       </div>
     </div>
   </details>
@@ -727,14 +739,12 @@
   const driveSaveBtn = document.getElementById('driveSaveBtn');
   const toastEl = document.getElementById('toast');
   // Google Drive UI
-  const driveClientId = document.getElementById('driveClientId');
   const driveFolder = document.getElementById('driveFolder');
   const driveAutoSave = document.getElementById('driveAutoSave');
   const driveConnectBtn = document.getElementById('driveConnectBtn');
   const driveDisconnectBtn = document.getElementById('driveDisconnectBtn');
   const driveStatus = document.getElementById('driveStatus');
-  const driveHelp = document.getElementById('driveHelp');
-  const driveHelpLink = document.getElementById('driveHelpLink');
+  const driveConnectLabel = driveConnectBtn.querySelector('span'); // inner text of the Google button
 
   let files = [];
   const filePreviews = new Map(); // File -> object URL (thumbnail), released on remove/clear
@@ -1927,6 +1937,8 @@
   // ---------------- Google Drive (OAuth via GIS + Drive REST) ----------------
   const DRIVE_KEY = 'imageTrimmer_drive_v1';
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+  // App's OAuth client ID (public, not a secret — restricted by authorized JS origin).
+  const DRIVE_CLIENT_ID = '892174777985-h8ceunh70oqvd2e1la073ojtteod20dq.apps.googleusercontent.com';
   const driveCard = document.getElementById('driveCard');
   let tokenClient = null;
   let accessToken = null;
@@ -1940,7 +1952,6 @@
   function saveDriveConfig() {
     try {
       localStorage.setItem(DRIVE_KEY, JSON.stringify({
-        clientId: driveClientId.value.trim(),
         folder: driveFolder.value.trim(),
         autoSave: driveAutoSave.checked,
       }));
@@ -1950,7 +1961,6 @@
     let s = null;
     try { s = JSON.parse(localStorage.getItem(DRIVE_KEY) || 'null'); } catch (_) {}
     if (!s) return;
-    if (s.clientId != null) driveClientId.value = s.clientId;
     if (s.folder) driveFolder.value = s.folder;
     if (s.autoSave != null) driveAutoSave.checked = s.autoSave;
   }
@@ -1967,23 +1977,21 @@
   }
   function updateDriveUI() {
     if (isConnected()) {
-      setDriveStatus('接続済み', 'connected');
+      setDriveStatus('ログイン済み', 'connected');
       driveConnectBtn.classList.add('hidden');
       driveDisconnectBtn.classList.remove('hidden');
     } else {
-      setDriveStatus('未接続');
+      setDriveStatus('未ログイン');
       driveConnectBtn.classList.remove('hidden');
       driveDisconnectBtn.classList.add('hidden');
     }
   }
 
   function ensureTokenClient() {
-    const clientId = driveClientId.value.trim();
-    if (!clientId) { notify('クライアントIDを入力してください', 'error'); return false; }
     if (!gisReady()) { notify('Google認証ライブラリが未読み込みです（HTTPS/ネット接続をご確認ください）', 'error'); return false; }
-    if (!tokenClient || tokenClient._clientId !== clientId) {
+    if (!tokenClient || tokenClient._clientId !== DRIVE_CLIENT_ID) {
       tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
+        client_id: DRIVE_CLIENT_ID,
         scope: DRIVE_SCOPE,
         callback: () => {},        // replaced per request
         error_callback: (err) => { // popup closed / failed to open / etc.
@@ -1994,7 +2002,7 @@
           }
         },
       });
-      tokenClient._clientId = clientId;
+      tokenClient._clientId = DRIVE_CLIENT_ID;
     }
     return true;
   }
@@ -2121,7 +2129,7 @@
       else notify(`Driveの「${driveFolderName}」へ ${ok} 件保存しました`, 'success');
     } catch (e) {
       console.error(e);
-      const hint = auto ? '（自動保存には先に「接続」が必要です）' : '';
+      const hint = auto ? '（自動保存には先に「Googleでログイン」してください）' : '';
       notify('Drive保存に失敗: ' + e.message + hint, 'error');
       updateDriveUI();
     } finally {
@@ -2133,27 +2141,30 @@
   }
 
   function maybeAutoSaveToDrive() {
-    if (!driveClientId.value.trim()) { notify('Drive自動保存: クライアントIDが未設定です', 'error'); return; }
     uploadResults(processed.slice(), { auto: true });
+  }
+
+  function setLoginBtnLabel(text) {
+    if (driveConnectLabel) driveConnectLabel.textContent = text;
   }
 
   // ---- Drive wiring ----
   driveConnectBtn.addEventListener('click', async () => {
     driveConnectBtn.disabled = true;
-    const prev = driveConnectBtn.textContent;
-    driveConnectBtn.textContent = '接続中…';
+    const prev = driveConnectLabel ? driveConnectLabel.textContent : '';
+    setLoginBtnLabel('ログイン中…');
     try {
       const token = await requestToken();
       await ensureFolder(token); // create/locate the folder up front
       updateDriveUI();
-      notify('Googleドライブに接続しました', 'success');
+      notify('Googleドライブにログインしました', 'success');
     } catch (e) {
       console.error(e);
-      setDriveStatus('接続エラー', 'error');
-      notify('接続に失敗: ' + e.message, 'error');
+      setDriveStatus('ログインエラー', 'error');
+      notify('ログインに失敗: ' + e.message, 'error');
     } finally {
       driveConnectBtn.disabled = false;
-      driveConnectBtn.textContent = prev;
+      setLoginBtnLabel(prev || 'Googleでログイン');
     }
   });
 
@@ -2163,34 +2174,16 @@
     }
     accessToken = null; tokenExpiry = 0; driveFolderId = null; driveFolderName = null;
     updateDriveUI();
-    notify('Driveの接続を解除しました');
+    notify('Googleドライブからログアウトしました');
   });
 
   driveSaveBtn.addEventListener('click', () => {
     if (!processed.length) return;
-    if (!driveClientId.value.trim()) {
-      notify('クライアントIDを入力してください（下の「Googleドライブ連携」を開いて設定）', 'error');
-      if (driveCard) driveCard.open = true;
-      return;
-    }
+    // Not logged in yet? uploadResults() triggers the Google login popup from this click gesture.
     uploadResults(processed.slice(), { auto: false });
   });
 
-  driveHelpLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    driveHelp.classList.toggle('hidden');
-    driveHelpLink.textContent = driveHelp.classList.contains('hidden') ? '作成手順を表示' : '作成手順を隠す';
-  });
-
-  [driveClientId, driveFolder, driveAutoSave].forEach(el => el.addEventListener('change', () => {
-    saveDriveConfig();
-    if (el === driveClientId) {
-      // Client ID changed — reset the token client and any cached token/folder
-      tokenClient = null; accessToken = null; tokenExpiry = 0;
-      driveFolderId = null; driveFolderName = null;
-      updateDriveUI();
-    }
-  }));
+  [driveFolder, driveAutoSave].forEach(el => el.addEventListener('change', saveDriveConfig));
 
   restoreDriveConfig();
   updateDriveUI();
