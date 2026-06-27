@@ -9,11 +9,12 @@
     --bg: #f5f5f7;
     --card: #ffffff;
     --text: #1d1d1f;
-    --muted: #6e6e73;
+    --muted: #595960;        /* darkened for WCAG AA (≈4.9:1 on --bg) */
     --border: #d2d2d7;
     --accent: #0071e3;
     --accent-hover: #0077ed;
     --danger: #ff3b30;
+    --danger-text: #c8102e;  /* readable red for error text (≈4.7:1 on white) */
     --success: #34c759;
   }
   * { box-sizing: border-box; }
@@ -47,8 +48,72 @@
     border-color: var(--accent);
     background: #f0f7ff;
   }
+  .drop-zone:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0,113,227,0.25);
+  }
   .drop-zone p { margin: 8px 0; color: var(--muted); }
   .drop-icon { font-size: 48px; margin-bottom: 8px; }
+
+  /* ---- Selected file list (before processing) ---- */
+  .file-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .file-list-item {
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+  }
+  .file-list-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    background: #f0f0f0;
+    display: block;
+  }
+  .file-list-meta {
+    padding: 6px 8px;
+    font-size: 11px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+  }
+  .file-list-name {
+    color: var(--text);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file-list-remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .file-list-remove:hover { background: var(--danger); }
+  .file-list-remove:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: -1px;
+  }
   .controls {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -353,12 +418,14 @@
   </div>
 
   <div class="card">
-    <div id="dropZone" class="drop-zone">
-      <div class="drop-icon">📷</div>
+    <div id="dropZone" class="drop-zone" role="button" tabindex="0"
+         aria-label="画像を選択。クリックまたはEnter/Spaceキーでファイルを開きます。ドラッグ&ドロップにも対応">
+      <div class="drop-icon" aria-hidden="true">📷</div>
       <p><strong>クリックして画像を選択</strong>、またはここにドラッグ&ドロップ</p>
       <p style="font-size:13px;">PNG / JPEG / WebP / GIF に対応 (複数可)</p>
-      <input type="file" id="fileInput" accept="image/*" multiple class="hidden">
+      <input type="file" id="fileInput" accept="image/*" multiple class="hidden" aria-label="画像ファイルを選択">
     </div>
+    <div id="fileList" class="file-list hidden" aria-label="選択中のファイル"></div>
   </div>
 
   <div class="card">
@@ -417,14 +484,14 @@
 
     <div class="actions">
       <button id="processBtn" class="btn btn-primary" disabled>トリミング実行</button>
-      <button id="downloadAllBtn" class="btn btn-secondary hidden">すべてダウンロード</button>
+      <button id="downloadAllBtn" class="btn btn-secondary hidden">すべてZIPで保存</button>
       <button id="clearBtn" class="btn btn-danger hidden">クリア</button>
     </div>
   </div>
 
   <div id="resultsCard" class="card hidden">
     <h3 style="margin:0 0 8px;">結果</h3>
-    <div id="stats" class="stats"></div>
+    <div id="stats" class="stats" role="status" aria-live="polite"></div>
     <div id="results" class="results"></div>
   </div>
 </div>
@@ -484,6 +551,7 @@
 (function() {
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
+  const fileList = document.getElementById('fileList');
   const widthInput = document.getElementById('width');
   const heightInput = document.getElementById('height');
   const modeSelect = document.getElementById('mode');
@@ -500,10 +568,17 @@
   const statsDiv = document.getElementById('stats');
 
   let files = [];
+  const filePreviews = new Map(); // File -> object URL (thumbnail), released on remove/clear
   let processed = [];
 
   // ------- File selection -------
   dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
   fileInput.addEventListener('change', e => addFiles(e.target.files));
 
   ['dragenter', 'dragover'].forEach(ev => {
@@ -522,22 +597,121 @@
     addFiles(e.dataTransfer.files);
   });
 
-  function addFiles(fileList) {
-    const imgs = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+  const THUMB_MAX = 160;               // px, long side of selected-file thumbnails
+  const fileThumbEls = new Map();      // File -> <img> element in the list
+
+  function fileKey(f) { return `${f.name}|${f.size}|${f.lastModified}`; }
+
+  function addFiles(list) {
+    const imgs = Array.from(list).filter(f => f.type.startsWith('image/'));
     if (!imgs.length) return;
-    files = files.concat(imgs);
+    const seen = new Set(files.map(fileKey));
+    const newly = [];
+    for (const f of imgs) {
+      const key = fileKey(f);
+      if (seen.has(key)) continue;       // skip duplicate selections
+      seen.add(key);
+      files.push(f);
+      filePreviews.set(f, null);         // placeholder until the thumbnail is ready
+      newly.push(f);
+    }
+    fileInput.value = '';                // allow re-selecting the same file later
+    if (!newly.length) return;
+    renderFileList();
     updateUI();
+    // Generate small thumbnails one at a time to keep peak memory ~1 image
+    (async () => {
+      for (const f of newly) {
+        if (!filePreviews.has(f)) continue;     // removed meanwhile
+        let thumb = null;
+        try { thumb = await makeThumb(f); } catch (_) {}
+        if (filePreviews.has(f)) {
+          filePreviews.set(f, thumb);
+          const el = fileThumbEls.get(f);
+          if (el && thumb) el.src = thumb;
+        } else if (thumb) {
+          URL.revokeObjectURL(thumb);
+        }
+      }
+    })();
+  }
+
+  async function makeThumb(file) {
+    const { img, url } = await loadImage(file);
+    try {
+      const iw = img.naturalWidth, ih = img.naturalHeight;
+      const scale = Math.min(1, THUMB_MAX / Math.max(iw, ih));
+      const w = Math.max(1, Math.round(iw * scale));
+      const h = Math.max(1, Math.round(ih * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, w, h);
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
+      return blob ? URL.createObjectURL(blob) : null;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function removeFile(f) {
+    const i = files.indexOf(f);
+    if (i === -1) return;
+    files.splice(i, 1);
+    const url = filePreviews.get(f);
+    if (url) URL.revokeObjectURL(url);
+    filePreviews.delete(f);
+    fileThumbEls.delete(f);
+    renderFileList();
+    updateUI();
+  }
+
+  function clearFilePreviews() {
+    filePreviews.forEach(url => { if (url) URL.revokeObjectURL(url); });
+    filePreviews.clear();
+    fileThumbEls.clear();
+  }
+
+  function renderFileList() {
+    fileList.innerHTML = '';
+    fileThumbEls.clear();
+    if (!files.length) {
+      fileList.classList.add('hidden');
+      return;
+    }
+    fileList.classList.remove('hidden');
+    files.forEach(f => {
+      const item = document.createElement('div');
+      item.className = 'file-list-item';
+      item.innerHTML = `
+        <img class="file-list-thumb" alt="">
+        <button class="file-list-remove" type="button" aria-label="${escapeHtml(f.name)} を一覧から削除">×</button>
+        <div class="file-list-meta">
+          <div class="file-list-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+          <div>${formatBytes(f.size)}</div>
+        </div>
+      `;
+      const imgEl = item.querySelector('.file-list-thumb');
+      const thumb = filePreviews.get(f);
+      if (thumb) imgEl.src = thumb;
+      fileThumbEls.set(f, imgEl);
+      item.querySelector('.file-list-remove').addEventListener('click', () => removeFile(f));
+      fileList.appendChild(item);
+    });
   }
 
   function updateUI() {
     processBtn.disabled = files.length === 0;
-    if (files.length) {
-      dropZone.querySelector('p strong').textContent =
-        `${files.length} 件選択中 — クリックで追加`;
-    } else {
-      dropZone.querySelector('p strong').textContent =
-        'クリックして画像を選択';
+    const strong = dropZone.querySelector('p strong');
+    if (strong) {
+      strong.textContent = files.length
+        ? `${files.length} 件選択中 — クリックで追加`
+        : 'クリックして画像を選択';
     }
+    // Clear button is available whenever there is anything to clear
+    clearBtn.classList.toggle('hidden', files.length === 0 && processed.length === 0);
   }
 
   // ------- Presets -------
@@ -545,6 +719,7 @@
     btn.addEventListener('click', () => {
       widthInput.value = btn.dataset.w;
       heightInput.value = btn.dataset.h;
+      saveSettings();
     });
   });
 
@@ -555,11 +730,46 @@
     bgField.style.pointerEvents = needsBg ? 'auto' : 'none';
   }
   modeSelect.addEventListener('change', updateBgFieldVisibility);
-  updateBgFieldVisibility();
 
   bgTransparent.addEventListener('change', () => {
     bgColor.disabled = bgTransparent.checked;
   });
+
+  // ------- Settings persistence (localStorage) -------
+  const SETTINGS_KEY = 'imageTrimmer_settings_v1';
+  const settingInputs = [widthInput, heightInput, modeSelect, formatSelect, qualityInput, bgColor, bgTransparent];
+
+  function saveSettings() {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        width: widthInput.value,
+        height: heightInput.value,
+        mode: modeSelect.value,
+        format: formatSelect.value,
+        quality: qualityInput.value,
+        bgColor: bgColor.value,
+        bgTransparent: bgTransparent.checked,
+      }));
+    } catch (_) {}
+  }
+
+  function restoreSettings() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); } catch (_) {}
+    if (!s) return;
+    if (s.width != null) widthInput.value = s.width;
+    if (s.height != null) heightInput.value = s.height;
+    if (s.mode != null) modeSelect.value = s.mode;
+    if (s.format != null) formatSelect.value = s.format;
+    if (s.quality != null) qualityInput.value = s.quality;
+    if (s.bgColor != null) bgColor.value = s.bgColor;
+    if (s.bgTransparent != null) bgTransparent.checked = s.bgTransparent;
+  }
+
+  settingInputs.forEach(el => el.addEventListener('change', saveSettings));
+  restoreSettings();
+  updateBgFieldVisibility();
+  bgColor.disabled = bgTransparent.checked;
 
   // ------- Processing -------
   processBtn.addEventListener('click', async () => {
@@ -570,9 +780,10 @@
       return;
     }
     processBtn.disabled = true;
+    clearBtn.disabled = true;        // prevent clearing mid-batch
     processBtn.textContent = '処理中...';
 
-    processed = [];
+    releaseProcessed();
     resultsDiv.innerHTML = '';
     resultsCard.classList.remove('hidden');
 
@@ -582,24 +793,42 @@
     const useTransparent = bgTransparent.checked && format !== 'image/jpeg';
     const bg = useTransparent ? null : bgColor.value;
 
-    for (let i = 0; i < files.length; i++) {
+    // Snapshot the selection so any concurrent add/remove can't disturb this batch
+    const batch = files.slice();
+    const total = batch.length;
+    let errCount = 0;
+    statsDiv.textContent = `処理中… (0 / ${total})`;
+
+    for (let i = 0; i < batch.length; i++) {
       try {
-        const result = await processImage(files[i], w, h, mode, format, quality, bg);
+        const result = await processImage(batch[i], w, h, mode, format, quality, bg);
         result.id = `r${Date.now()}_${i}`;
         processed.push(result);
         renderResult(result);
       } catch (err) {
         console.error(err);
-        renderError(files[i], err);
+        errCount++;
+        renderError(batch[i], err);
       }
+      statsDiv.textContent = `処理中… (${i + 1} / ${total})`;
     }
 
     processBtn.disabled = false;
+    clearBtn.disabled = false;
     processBtn.textContent = 'トリミング実行';
     downloadAllBtn.classList.toggle('hidden', processed.length === 0);
     clearBtn.classList.remove('hidden');
-    statsDiv.textContent = `${processed.length} / ${files.length} 件を処理しました`;
+    statsDiv.textContent = errCount
+      ? `${processed.length} / ${total} 件を処理しました（${errCount} 件失敗）`
+      : `${processed.length} / ${total} 件を処理しました`;
   });
+
+  function releaseProcessed() {
+    processed.forEach(r => {
+      if (r.url) URL.revokeObjectURL(r.url);
+    });
+    processed = [];
+  }
 
   function loadImage(file) {
     return new Promise((resolve, reject) => {
@@ -688,19 +917,18 @@
         originalSize: file.size,
         originalW: iw,
         originalH: ih,
-        // Edit state
+        // Edit state — the decoded source image is NOT kept in memory.
+        // The editor re-decodes lazily from `file` on demand (see openEditor).
         file,
-        img,
-        imgObjectUrl: url,
         transform,
         mode,
         format,
         quality,
         bg,
       };
-    } catch (err) {
+    } finally {
+      // Release the decoded source image immediately to keep peak memory ~1 image
       URL.revokeObjectURL(url);
-      throw err;
     }
   }
 
@@ -709,15 +937,15 @@
     item.className = 'result-item';
     item.dataset.id = r.id;
     item.innerHTML = `
-      <div class="result-thumb"><img src="${r.url}" alt=""></div>
+      <div class="result-thumb"><img src="${r.url}" alt="${escapeHtml(r.name)}"></div>
       <div class="result-info">
         <div class="result-name" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</div>
         <div class="result-meta">${r.w}×${r.h} · ${formatBytes(r.size)}</div>
-        <div style="font-size:11px; opacity:0.8;">元: ${r.originalW}×${r.originalH} · ${formatBytes(r.originalSize)}</div>
+        <div style="font-size:11px;">元: ${r.originalW}×${r.originalH} · ${formatBytes(r.originalSize)}</div>
       </div>
       <div class="result-actions">
-        <button class="btn btn-secondary edit">編集</button>
-        <button class="btn btn-primary dl">保存</button>
+        <button class="btn btn-secondary edit" aria-label="${escapeHtml(r.name)} を編集">編集</button>
+        <button class="btn btn-primary dl" aria-label="${escapeHtml(r.name)} を保存">保存</button>
       </div>
     `;
     item.querySelector('.dl').addEventListener('click', () => downloadBlob(r.blob, r.name));
@@ -738,7 +966,7 @@
     const item = document.createElement('div');
     item.className = 'result-item';
     item.innerHTML = `
-      <div class="result-thumb" style="color:var(--danger); font-size:12px; padding:12px; text-align:center;">
+      <div class="result-thumb" style="color:var(--danger-text); font-size:12px; padding:12px; text-align:center;">
         エラー<br>${escapeHtml(err.message || 'unknown')}
       </div>
       <div class="result-info">
@@ -749,20 +977,45 @@
   }
 
   downloadAllBtn.addEventListener('click', async () => {
-    // Sequential downloads
-    for (const r of processed) {
-      downloadBlob(r.blob, r.name);
-      await new Promise(res => setTimeout(res, 120));
+    if (!processed.length) return;
+    const label = downloadAllBtn.textContent;
+    downloadAllBtn.disabled = true;
+    downloadAllBtn.textContent = 'ZIP生成中…';
+    try {
+      const usedNames = new Set();
+      const entries = [];
+      for (const r of processed) {
+        const name = uniqueName(r.name, usedNames);
+        usedNames.add(name);
+        const buf = await r.blob.arrayBuffer();
+        entries.push({ name, bytes: new Uint8Array(buf) });
+      }
+      const zipBlob = makeZipBlob(entries);
+      downloadBlob(zipBlob, `trimmed_${entries.length}images.zip`);
+    } catch (err) {
+      console.error(err);
+      alert('ZIPの生成に失敗しました: ' + (err && err.message ? err.message : err));
+    } finally {
+      downloadAllBtn.disabled = false;
+      downloadAllBtn.textContent = label;
     }
   });
 
+  function uniqueName(name, used) {
+    if (!used.has(name)) return name;
+    const dot = name.lastIndexOf('.');
+    const stem = dot === -1 ? name : name.slice(0, dot);
+    const ext = dot === -1 ? '' : name.slice(dot);
+    let n = 2;
+    while (used.has(`${stem}_${n}${ext}`)) n++;
+    return `${stem}_${n}${ext}`;
+  }
+
   clearBtn.addEventListener('click', () => {
     files = [];
-    processed.forEach(r => {
-      URL.revokeObjectURL(r.url);
-      if (r.imgObjectUrl) URL.revokeObjectURL(r.imgObjectUrl);
-    });
-    processed = [];
+    clearFilePreviews();
+    renderFileList();
+    releaseProcessed();
     resultsDiv.innerHTML = '';
     resultsCard.classList.add('hidden');
     downloadAllBtn.classList.add('hidden');
@@ -770,6 +1023,88 @@
     fileInput.value = '';
     updateUI();
   });
+
+  // ---------------- ZIP (store / no compression) ----------------
+  const crcTable = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) {
+      c = crcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    }
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function makeZipBlob(entries) {
+    // entries: [{ name, bytes: Uint8Array }] — stored uncompressed (method 0)
+    const enc = new TextEncoder();
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    for (const e of entries) {
+      const nameBytes = enc.encode(e.name);
+      const crc = crc32(e.bytes);
+      const size = e.bytes.length;
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true);   // local file header signature
+      lh.setUint16(4, 20, true);           // version needed
+      lh.setUint16(6, 0x0800, true);       // flags: UTF-8 filename
+      lh.setUint16(8, 0, true);            // method: store
+      lh.setUint16(10, 0, true);           // mod time
+      lh.setUint16(12, 0, true);           // mod date
+      lh.setUint32(14, crc, true);
+      lh.setUint32(18, size, true);        // compressed size
+      lh.setUint32(22, size, true);        // uncompressed size
+      lh.setUint16(26, nameBytes.length, true);
+      lh.setUint16(28, 0, true);           // extra length
+      parts.push(new Uint8Array(lh.buffer), nameBytes, e.bytes);
+      const cd = new DataView(new ArrayBuffer(46));
+      cd.setUint32(0, 0x02014b50, true);   // central dir signature
+      cd.setUint16(4, 20, true);           // version made by
+      cd.setUint16(6, 20, true);           // version needed
+      cd.setUint16(8, 0x0800, true);       // flags
+      cd.setUint16(10, 0, true);           // method
+      cd.setUint16(12, 0, true);
+      cd.setUint16(14, 0, true);
+      cd.setUint32(16, crc, true);
+      cd.setUint32(20, size, true);
+      cd.setUint32(24, size, true);
+      cd.setUint16(28, nameBytes.length, true);
+      cd.setUint16(30, 0, true);           // extra length
+      cd.setUint16(32, 0, true);           // comment length
+      cd.setUint16(34, 0, true);           // disk number
+      cd.setUint16(36, 0, true);           // internal attrs
+      cd.setUint32(38, 0, true);           // external attrs
+      cd.setUint32(42, offset, true);      // local header offset
+      central.push({ header: new Uint8Array(cd.buffer), nameBytes });
+      offset += 30 + nameBytes.length + size;
+    }
+    const centralStart = offset;
+    let centralSize = 0;
+    for (const c of central) {
+      parts.push(c.header, c.nameBytes);
+      centralSize += c.header.length + c.nameBytes.length;
+    }
+    const eocd = new DataView(new ArrayBuffer(22));
+    eocd.setUint32(0, 0x06054b50, true);   // end of central directory
+    eocd.setUint16(4, 0, true);
+    eocd.setUint16(6, 0, true);
+    eocd.setUint16(8, entries.length, true);
+    eocd.setUint16(10, entries.length, true);
+    eocd.setUint32(12, centralSize, true);
+    eocd.setUint32(16, centralStart, true);
+    eocd.setUint16(20, 0, true);
+    parts.push(new Uint8Array(eocd.buffer));
+    return new Blob(parts, { type: 'application/zip' });
+  }
 
   // ---------------- Editor ----------------
   const editorModal = document.getElementById('editorModal');
@@ -787,23 +1122,42 @@
   const EDITOR_MAX_DISPLAY = 520; // max px for long side of preview
 
   let editorState = null;
-  // { result, img, tw, th, bg, displayScale, displayW, displayH,
+  let editorOpening = false; // re-entry guard for the async openEditor decode
+  // { result, img, imgObjectUrl, tw, th, bg, displayScale, displayW, displayH,
   //   baseScale, minScale, maxScale, scale, offsetX, offsetY }
 
-  function openEditor(r) {
-    const iw = r.img.naturalWidth;
-    const ih = r.img.naturalHeight;
+  async function openEditor(r) {
+    if (editorOpening || editorState) return;   // ignore re-entry while opening or already open
+    editorOpening = true;
+    // The decoded source image is not retained on the result; re-decode lazily from the file.
+    let decoded;
+    try {
+      decoded = await loadImage(r.file);
+    } catch (err) {
+      editorOpening = false;
+      console.error(err);
+      alert('画像の読み込みに失敗しました');
+      return;
+    }
+    const img = decoded.img;
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
     const tw = r.w;
     const th = r.h;
 
-    // Display canvas size (preview) preserves target aspect ratio
+    // Available preview box: clamp to the viewport so the canvas never overflows on mobile.
+    // Horizontal chrome ≈ overlay(32)+modal(40)+stage(32); vertical chrome ≈ header/controls/footer.
+    const availW = Math.max(160, Math.min(EDITOR_MAX_DISPLAY, window.innerWidth - 112));
+    const availH = Math.max(160, Math.min(EDITOR_MAX_DISPLAY, window.innerHeight - 320));
+
+    // Fit the target box within availW×availH preserving aspect ratio (never upscaled past target).
     const targetAspect = tw / th;
     let displayW, displayH;
-    if (targetAspect >= 1) {
-      displayW = Math.min(EDITOR_MAX_DISPLAY, tw);
+    if (tw / availW >= th / availH) {
+      displayW = Math.min(availW, tw);
       displayH = displayW / targetAspect;
     } else {
-      displayH = Math.min(EDITOR_MAX_DISPLAY, th);
+      displayH = Math.min(availH, th);
       displayW = displayH * targetAspect;
     }
     const displayScale = displayW / tw;
@@ -818,7 +1172,8 @@
 
     editorState = {
       result: r,
-      img: r.img,
+      img,
+      imgObjectUrl: decoded.url,   // released in closeEditor
       iw, ih, tw, th,
       bg: r.bg,
       mode: r.mode,
@@ -838,9 +1193,13 @@
     updateZoomSlider();
     drawEditor();
     editorModal.classList.remove('hidden');
+    editorOpening = false;
   }
 
   function closeEditor() {
+    if (editorState && editorState.imgObjectUrl) {
+      URL.revokeObjectURL(editorState.imgObjectUrl);
+    }
     editorModal.classList.add('hidden');
     editorState = null;
   }
