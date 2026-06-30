@@ -6,6 +6,8 @@
 <title>画像自動トリミング</title>
 <!-- Google Identity Services (OAuth token client for Drive upload) -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<!-- Google API loader (for the Drive folder Picker) -->
+<script src="https://apis.google.com/js/api.js" async defer></script>
 <style>
   :root {
     --bg: #f5f5f7;
@@ -495,6 +497,26 @@
     word-break: break-all;
   }
 
+  .dest-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .drive-advanced { margin-top: 4px; }
+  .drive-advanced summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    list-style: none;
+  }
+  .drive-advanced summary::-webkit-details-marker { display: none; }
+  .drive-advanced summary::before { content: '▸ '; }
+  .drive-advanced[open] summary::before { content: '▾ '; }
+  .drive-advanced input[type=text] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+
   /* ---- Google sign-in button ---- */
   .gbtn {
     display: inline-flex;
@@ -640,9 +662,17 @@
       <span id="driveStatus" class="drive-status">未ログイン</span>
     </summary>
     <div class="drive-body">
-      <p class="field-hint" style="margin:0;">Googleアカウントでログインすると、処理した画像をドライブに保存できます。アクセス範囲はこのアプリが作成するフォルダのみ（<code>drive.file</code>）で、他のファイルには一切アクセスしません。</p>
+      <p class="field-hint" style="margin:0;">Googleアカウントでログインすると、処理した画像をドライブに保存できます。アクセス範囲はこのアプリが作成・選択したフォルダのみ（<code>drive.file</code>）で、他のファイルには一切アクセスしません。</p>
       <div class="field">
-        <label for="driveFolder">保存先フォルダ名 (Drive内に自動作成)</label>
+        <label>保存先</label>
+        <div class="dest-row">
+          <button id="drivePickBtn" class="btn btn-secondary" type="button">📁 フォルダを選択</button>
+          <button id="driveClearDestBtn" class="btn btn-secondary hidden" type="button">解除</button>
+        </div>
+        <span class="field-hint" id="driveDestHint"></span>
+      </div>
+      <div class="field" id="driveFolderField">
+        <label for="driveFolder">フォルダ名 (未選択時にマイドライブ直下へ自動作成)</label>
         <input type="text" id="driveFolder" value="画像トリミング" autocomplete="off">
       </div>
       <label class="checkbox-row" style="gap:8px;">
@@ -661,6 +691,13 @@
         </button>
         <button id="driveDisconnectBtn" class="btn btn-secondary hidden" type="button">ログアウト</button>
       </div>
+      <details class="drive-advanced">
+        <summary>詳細設定（フォルダ選択用 API キー）</summary>
+        <div class="field" style="margin-top:10px;">
+          <input type="text" id="driveApiKey" placeholder="AIza... (Google Picker 用 API キー)" autocomplete="off" spellcheck="false">
+          <span class="field-hint">「フォルダを選択」を使うには、Google Cloud で <strong>Google Picker API</strong> を有効化し、<strong>API キー</strong>を作成して貼り付けてください（HTTPリファラー制限を推奨）。未設定でも「画像トリミング」フォルダへの自動保存は使えます。</span>
+        </div>
+      </details>
     </div>
   </details>
 </div>
@@ -742,11 +779,16 @@
   const toastEl = document.getElementById('toast');
   // Google Drive UI
   const driveFolder = document.getElementById('driveFolder');
+  const driveFolderField = document.getElementById('driveFolderField');
   const driveAutoSave = document.getElementById('driveAutoSave');
   const driveConnectBtn = document.getElementById('driveConnectBtn');
   const driveDisconnectBtn = document.getElementById('driveDisconnectBtn');
   const driveStatus = document.getElementById('driveStatus');
   const driveConnectLabel = driveConnectBtn.querySelector('span'); // inner text of the Google button
+  const drivePickBtn = document.getElementById('drivePickBtn');
+  const driveClearDestBtn = document.getElementById('driveClearDestBtn');
+  const driveDestHint = document.getElementById('driveDestHint');
+  const driveApiKey = document.getElementById('driveApiKey');
 
   let files = [];
   const filePreviews = new Map(); // File -> object URL (thumbnail), released on remove/clear
@@ -1945,6 +1987,7 @@
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
   // App's OAuth client ID (public, not a secret — restricted by authorized JS origin).
   const DRIVE_CLIENT_ID = '892174777985-h8ceunh70oqvd2e1la073ojtteod20dq.apps.googleusercontent.com';
+  const DRIVE_APP_ID = '892174777985'; // Google Cloud project number (for the Picker)
   const driveCard = document.getElementById('driveCard');
   let tokenClient = null;
   let accessToken = null;
@@ -1954,12 +1997,18 @@
   let driveBusy = false;
   let pendingTokenReject = null; // lets error_callback reject the in-flight token request
   let tokenInFlight = null;      // dedupes concurrent token requests
+  let pickedFolderId = null;     // folder chosen via the Picker (saves directly there)
+  let pickedFolderName = null;
+  let pickerApiLoaded = false;
 
   function saveDriveConfig() {
     try {
       localStorage.setItem(DRIVE_KEY, JSON.stringify({
         folder: driveFolder.value.trim(),
         autoSave: driveAutoSave.checked,
+        apiKey: driveApiKey.value.trim(),
+        pickedFolderId: pickedFolderId,
+        pickedFolderName: pickedFolderName,
       }));
     } catch (_) {}
   }
@@ -1969,7 +2018,26 @@
     if (!s) return;
     if (s.folder) driveFolder.value = s.folder;
     if (s.autoSave != null) driveAutoSave.checked = s.autoSave;
+    if (s.apiKey) driveApiKey.value = s.apiKey;
+    if (s.pickedFolderId) { pickedFolderId = s.pickedFolderId; pickedFolderName = s.pickedFolderName || 'フォルダ'; }
   }
+
+  // Load the Picker library (api.js loads async; poll briefly until gapi is present)
+  let pickerPollTries = 0;
+  let pickerPollScheduled = false;
+  function loadPicker() {
+    if (pickerApiLoaded) return;
+    if (typeof gapi === 'undefined') {
+      if (pickerPollTries < 40 && !pickerPollScheduled) { // cap at ~12s, single timer
+        pickerPollTries++;
+        pickerPollScheduled = true;
+        setTimeout(() => { pickerPollScheduled = false; loadPicker(); }, 300);
+      }
+      return;
+    }
+    gapi.load('picker', () => { pickerApiLoaded = true; });
+  }
+  loadPicker();
 
   function gisReady() {
     return typeof google !== 'undefined' && google.accounts && google.accounts.oauth2;
@@ -2067,6 +2135,8 @@
   }
 
   async function ensureFolder(token) {
+    // A folder chosen via the Picker takes priority — save directly into it.
+    if (pickedFolderId) return pickedFolderId;
     const name = driveFolder.value.trim() || '画像トリミング';
     if (driveFolderId && driveFolderName === name) return driveFolderId;
     // Drive v3 query: escape backslashes first, then single quotes
@@ -2131,8 +2201,9 @@
           if (/認証/.test(e.message)) throw e; // stop the batch on auth failure
         }
       }
+      const destName = pickedFolderId ? pickedFolderName : driveFolderName;
       if (fail) notify(`Driveへ ${ok} 件保存（${fail} 件失敗）`, ok ? 'success' : 'error');
-      else notify(`Driveの「${driveFolderName}」へ ${ok} 件保存しました`, 'success');
+      else notify(`Driveの「${destName}」へ ${ok} 件保存しました`, 'success');
     } catch (e) {
       console.error(e);
       const hint = auto ? '（自動保存には先に「Googleでログイン」してください）' : '';
@@ -2152,6 +2223,75 @@
 
   function setLoginBtnLabel(text) {
     if (driveConnectLabel) driveConnectLabel.textContent = text;
+  }
+
+  function updateDestUI() {
+    if (pickedFolderId) {
+      driveDestHint.textContent = `保存先: 選択したフォルダ「${pickedFolderName}」`;
+      driveClearDestBtn.classList.remove('hidden');
+      if (driveFolderField) driveFolderField.style.display = 'none';
+    } else {
+      const nm = driveFolder.value.trim() || '画像トリミング';
+      driveDestHint.textContent = `保存先: マイドライブに「${nm}」を自動作成`;
+      driveClearDestBtn.classList.add('hidden');
+      if (driveFolderField) driveFolderField.style.display = '';
+    }
+  }
+
+  // The Picker requires a Developer key (API key). Disable the button until one is set.
+  function updatePickerButton() {
+    const hasKey = !!driveApiKey.value.trim();
+    drivePickBtn.disabled = !hasKey;
+    drivePickBtn.title = hasKey ? '' : 'フォルダ選択には「詳細設定」でAPIキーの設定が必要です';
+  }
+
+  async function openFolderPicker() {
+    const apiKey = driveApiKey.value.trim();
+    if (!apiKey) {
+      notify('フォルダ選択にはAPIキーが必要です（下の「詳細設定」で設定）', 'error');
+      if (driveCard) driveCard.open = true;
+      return;
+    }
+    if (!pickerApiLoaded || typeof google === 'undefined' || !google.picker) {
+      loadPicker();
+      notify('フォルダ選択の準備中です。数秒後にもう一度お試しください', 'error');
+      return;
+    }
+    let token;
+    try {
+      token = await requestToken();
+    } catch (e) {
+      notify('フォルダ選択にはGoogleログインが必要です: ' + e.message, 'error');
+      return;
+    }
+    const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      .setSelectFolderEnabled(true)
+      .setMimeTypes('application/vnd.google-apps.folder')
+      .setMode(google.picker.DocsViewMode.LIST);
+    try {
+      const picker = new google.picker.PickerBuilder()
+        .setOAuthToken(token)
+        .setDeveloperKey(apiKey)
+        .setAppId(DRIVE_APP_ID)
+        .addView(view)
+        .setTitle('保存先フォルダを選択')
+        .setCallback((data) => {
+          if (data.action === google.picker.Action.PICKED && data.docs && data.docs.length) {
+            const doc = data.docs[0];
+            pickedFolderId = doc.id;
+            pickedFolderName = doc.name || 'フォルダ';
+            driveFolderId = null; driveFolderName = null; // invalidate auto-folder cache
+            saveDriveConfig();
+            updateDestUI();
+            notify(`保存先を「${pickedFolderName}」に設定しました`, 'success');
+          }
+        })
+        .build();
+      picker.setVisible(true);
+    } catch (e) {
+      console.error(e);
+      notify('フォルダ選択画面を開けませんでした。詳細設定のAPIキーをご確認ください', 'error');
+    }
   }
 
   // ---- Drive wiring ----
@@ -2189,10 +2329,23 @@
     uploadResults(processed.slice(), { auto: false });
   });
 
-  [driveFolder, driveAutoSave].forEach(el => el.addEventListener('change', saveDriveConfig));
+  [driveFolder, driveAutoSave, driveApiKey].forEach(el => el.addEventListener('change', saveDriveConfig));
+  driveFolder.addEventListener('input', updateDestUI);
+  driveApiKey.addEventListener('input', updatePickerButton);
+
+  drivePickBtn.addEventListener('click', openFolderPicker);
+  driveClearDestBtn.addEventListener('click', () => {
+    pickedFolderId = null; pickedFolderName = null;
+    driveFolderId = null; driveFolderName = null;
+    saveDriveConfig();
+    updateDestUI();
+    notify('保存先の選択を解除しました');
+  });
 
   restoreDriveConfig();
   updateDriveUI();
+  updateDestUI();
+  updatePickerButton();
 })();
 </script>
 </body>
