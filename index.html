@@ -1199,6 +1199,7 @@
   function startRename(item, r) {
     const nameEl = item.querySelector('.result-name');
     if (!nameEl || item.querySelector('.result-name-input')) return;
+    const original = r.name;
     const dot = r.name.lastIndexOf('.');
     const stem = dot === -1 ? r.name : r.name.slice(0, dot);
     const input = document.createElement('input');
@@ -1210,14 +1211,20 @@
     input.focus();
     input.select();
 
+    // Apply live on every keystroke so downloads / ZIP / Drive always use the latest
+    // name even if the field hasn't been "committed" (blur/Enter) before the click.
+    const applyLive = () => {
+      const clean = sanitizeName(input.value);
+      r.name = clean ? `${clean}.${r.ext}` : original;
+    };
+    input.addEventListener('input', applyLive);
+
     let done = false;
     const commit = (save) => {
       if (done) return;
       done = true;
-      if (save) {
-        const clean = sanitizeName(input.value);
-        if (clean) r.name = `${clean}.${r.ext}`;
-      }
+      if (save) applyLive();
+      else r.name = original;
       const newNameEl = document.createElement('div');
       newNameEl.className = 'result-name';
       newNameEl.title = 'クリック、または「名前変更」ボタンで変更';
