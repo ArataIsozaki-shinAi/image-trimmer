@@ -220,6 +220,30 @@
   .bg-color-row input[type=color] { width: 40px; height: 40px; padding: 2px; cursor: pointer; }
   .stats { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
 
+  /* ---- LINE stamp mode ---- */
+  .line-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #f7fff9;
+    margin-bottom: 14px;
+    cursor: pointer;
+  }
+  .line-mode-row.active { border-color: #06c755; box-shadow: 0 0 0 1px #06c755; }
+  .line-mode-row input { width: 18px; height: 18px; }
+  .line-badge {
+    background: #06c755;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+
   /* ---- Editor modal ---- */
   .modal-overlay {
     position: fixed;
@@ -566,7 +590,7 @@
   <div class="header-row">
     <div>
       <h1>画像自動トリミング</h1>
-      <p class="subtitle" style="margin:0;">画像をアップロードして、指定したサイズに自動でトリミングします</p>
+      <p class="subtitle" style="margin:0;">画像をアップロードして、指定サイズへの自動トリミングや LINEスタンプ用の一括変換ができます</p>
     </div>
     <button id="helpBtn" class="help-btn" type="button">使い方を見る</button>
   </div>
@@ -584,6 +608,65 @@
 
   <div class="card">
     <h3 style="margin:0 0 12px;">トリミング設定</h3>
+
+    <label class="line-mode-row" id="lineModeRow">
+      <input type="checkbox" id="lineModeToggle">
+      <span class="line-badge">LINE</span>
+      <span style="font-weight:600;">LINEスタンプモード</span>
+      <span class="field-hint">シート分割・背景透過・LINE Creators Market 用サイズで一括書き出し</span>
+    </label>
+
+    <div id="lineControls" class="hidden">
+      <div class="controls">
+        <div class="field">
+          <label for="lineType">作成する画像</label>
+          <select id="lineType">
+            <option value="stamp">スタンプ画像 (370×320)</option>
+            <option value="main">メイン画像 (240×240)</option>
+            <option value="tab">トークルームタブ (96×74)</option>
+            <option value="emoji">LINE絵文字 (180×180)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="lineInput">画像の読み込み方</label>
+          <select id="lineInput">
+            <option value="sheet">シートを分割 (グリッド)</option>
+            <option value="single">1枚 = 1スタンプ</option>
+          </select>
+        </div>
+        <div class="field line-sheet-only">
+          <label for="lineCols">列数 (横のマス数)</label>
+          <input type="number" id="lineCols" min="1" max="12" value="4">
+        </div>
+        <div class="field line-sheet-only">
+          <label for="lineRows">行数 (縦のマス数)</label>
+          <input type="number" id="lineRows" min="1" max="12" value="4">
+        </div>
+        <div class="field">
+          <label for="lineBgRemove">背景の透過 (白背景を除去)</label>
+          <select id="lineBgRemove">
+            <option value="normal">標準</option>
+            <option value="weak">弱め</option>
+            <option value="strong">強め</option>
+            <option value="off">なし</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>オプション</label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="lineAutoTrim" checked>
+            <span style="font-size:13px;">余白を自動トリムして中央に最大配置</span>
+          </label>
+          <label class="checkbox-row" id="lineMakeExtrasRow">
+            <input type="checkbox" id="lineMakeExtras">
+            <span style="font-size:13px;">main.png / tab.png も自動生成</span>
+          </label>
+        </div>
+      </div>
+      <p class="field-hint" id="lineSummary" style="margin:12px 0 0;"></p>
+    </div>
+
+    <div id="genericControls">
     <div class="controls">
       <div class="field">
         <label for="width">幅 (px)</label>
@@ -640,6 +723,7 @@
       <label for="namePattern">ファイル名パターン</label>
       <input type="text" id="namePattern" value="{name}_{w}x{h}" placeholder="{name}_{w}x{h}" autocomplete="off" spellcheck="false">
       <span class="field-hint">トークン: <code>{name}</code> 元の名前 / <code>{w}</code> 幅 / <code>{h}</code> 高さ / <code>{index}</code> 連番（拡張子は自動付与・各カードで個別変更も可）</span>
+    </div>
     </div>
 
     <div class="actions">
@@ -789,10 +873,26 @@
   const driveClearDestBtn = document.getElementById('driveClearDestBtn');
   const driveDestHint = document.getElementById('driveDestHint');
   const driveApiKey = document.getElementById('driveApiKey');
+  // LINE stamp mode UI
+  const lineModeRow = document.getElementById('lineModeRow');
+  const lineModeToggle = document.getElementById('lineModeToggle');
+  const lineControls = document.getElementById('lineControls');
+  const genericControls = document.getElementById('genericControls');
+  const lineType = document.getElementById('lineType');
+  const lineInput = document.getElementById('lineInput');
+  const lineCols = document.getElementById('lineCols');
+  const lineRows = document.getElementById('lineRows');
+  const lineBgRemove = document.getElementById('lineBgRemove');
+  const lineAutoTrim = document.getElementById('lineAutoTrim');
+  const lineMakeExtras = document.getElementById('lineMakeExtras');
+  const lineMakeExtrasRow = document.getElementById('lineMakeExtrasRow');
+  const lineSummary = document.getElementById('lineSummary');
 
   let files = [];
   const filePreviews = new Map(); // File -> object URL (thumbnail), released on remove/clear
   let processed = [];
+  let lastZipStem = null;         // 'line_stamp' など。通常モードは null
+  let isProcessing = false;       // バッチ実行中は再実行とラベル書き換えを抑止
 
   // ------- File selection -------
   dropZone.addEventListener('click', () => fileInput.click());
@@ -927,7 +1027,7 @@
   }
 
   function updateUI() {
-    processBtn.disabled = files.length === 0;
+    processBtn.disabled = isProcessing || files.length === 0;
     const strong = dropZone.querySelector('p strong');
     if (strong) {
       strong.textContent = files.length
@@ -947,6 +1047,58 @@
     });
   });
 
+  // ------- LINE stamp mode -------
+  const LINE_SPECS = {
+    stamp: { w: 370, h: 320, label: 'スタンプ画像', pad: 2 },
+    main:  { w: 240, h: 240, label: 'メイン画像', fixed: 'main' },
+    tab:   { w: 96,  h: 74,  label: 'トークルームタブ画像', fixed: 'tab' },
+    emoji: { w: 180, h: 180, label: 'LINE絵文字', pad: 3 },
+  };
+  // 背景透過の強さ: hard 以下は完全透過、hard〜soft は距離に応じて半透明 (縁をなじませる)
+  const LINE_BG_LEVELS = {
+    weak:   { hard: 14, soft: 44 },
+    normal: { hard: 28, soft: 70 },
+    strong: { hard: 48, soft: 110 },
+  };
+  const LINE_CELL_MAX = 2048;      // 1マスの作業解像度の上限 (メモリ対策)
+  const LINE_STAMP_COUNTS = [8, 16, 24, 32, 40];
+
+  function isLineMode() { return lineModeToggle.checked; }
+
+  function clampInt(v, lo, hi, dflt) {
+    const n = parseInt(v, 10);
+    if (isNaN(n)) return dflt;
+    return Math.max(lo, Math.min(hi, n));
+  }
+
+  function updateLineUI() {
+    const on = isLineMode();
+    lineControls.classList.toggle('hidden', !on);
+    genericControls.classList.toggle('hidden', on);
+    lineModeRow.classList.toggle('active', on);
+    if (!isProcessing) processBtn.textContent = on ? 'スタンプ生成' : 'トリミング実行';
+    const sheet = lineInput.value === 'sheet';
+    document.querySelectorAll('.line-sheet-only').forEach(el => el.classList.toggle('hidden', !sheet));
+    const spec = LINE_SPECS[lineType.value] || LINE_SPECS.stamp;
+    lineMakeExtrasRow.classList.toggle('hidden', lineType.value !== 'stamp');
+    const cols = clampInt(lineCols.value, 1, 12, 4);
+    const rows = clampInt(lineRows.value, 1, 12, 4);
+    const src = sheet
+      ? `各画像を ${cols}×${rows} = ${cols * rows} マスに等分割し、`
+      : '各画像を1コマとして、';
+    const nameNote = spec.fixed
+      ? `ファイル名は ${spec.fixed}.png`
+      : `ファイル名は ${'1'.padStart(spec.pad, '0')}.png からの連番`;
+    lineSummary.textContent =
+      `${src}${spec.label} ${spec.w}×${spec.h} の透過PNGを書き出します（${nameNote}・空のマスは自動スキップ）。`;
+  }
+
+  [lineModeToggle, lineType, lineInput, lineBgRemove].forEach(el => el.addEventListener('change', updateLineUI));
+  [lineCols, lineRows].forEach(el => {
+    el.addEventListener('input', updateLineUI);
+    el.addEventListener('change', updateLineUI);
+  });
+
   // ------- Background field visibility -------
   function updateBgFieldVisibility() {
     const needsBg = modeSelect.value === 'contain';
@@ -961,7 +1113,8 @@
 
   // ------- Settings persistence (localStorage) -------
   const SETTINGS_KEY = 'imageTrimmer_settings_v1';
-  const settingInputs = [widthInput, heightInput, modeSelect, formatSelect, qualityInput, bgColor, bgTransparent, namePattern];
+  const settingInputs = [widthInput, heightInput, modeSelect, formatSelect, qualityInput, bgColor, bgTransparent, namePattern,
+    lineModeToggle, lineType, lineInput, lineCols, lineRows, lineBgRemove, lineAutoTrim, lineMakeExtras];
 
   function saveSettings() {
     try {
@@ -974,6 +1127,14 @@
         bgColor: bgColor.value,
         bgTransparent: bgTransparent.checked,
         namePattern: namePattern.value,
+        lineMode: lineModeToggle.checked,
+        lineType: lineType.value,
+        lineInput: lineInput.value,
+        lineCols: lineCols.value,
+        lineRows: lineRows.value,
+        lineBgRemove: lineBgRemove.value,
+        lineAutoTrim: lineAutoTrim.checked,
+        lineMakeExtras: lineMakeExtras.checked,
       }));
     } catch (_) {}
   }
@@ -990,21 +1151,33 @@
     if (s.bgColor != null) bgColor.value = s.bgColor;
     if (s.bgTransparent != null) bgTransparent.checked = s.bgTransparent;
     if (s.namePattern != null) namePattern.value = s.namePattern;
+    if (s.lineMode != null) lineModeToggle.checked = !!s.lineMode;
+    if (s.lineType != null && LINE_SPECS[s.lineType]) lineType.value = s.lineType;
+    if (s.lineInput != null) lineInput.value = s.lineInput === 'single' ? 'single' : 'sheet';
+    if (s.lineCols != null) lineCols.value = s.lineCols;
+    if (s.lineRows != null) lineRows.value = s.lineRows;
+    if (s.lineBgRemove != null && (s.lineBgRemove === 'off' || LINE_BG_LEVELS[s.lineBgRemove])) lineBgRemove.value = s.lineBgRemove;
+    if (s.lineAutoTrim != null) lineAutoTrim.checked = !!s.lineAutoTrim;
+    if (s.lineMakeExtras != null) lineMakeExtras.checked = !!s.lineMakeExtras;
   }
 
   settingInputs.forEach(el => el.addEventListener('change', saveSettings));
   restoreSettings();
   updateBgFieldVisibility();
+  updateLineUI();
   bgColor.disabled = bgTransparent.checked;
 
   // ------- Processing -------
   processBtn.addEventListener('click', async () => {
+    if (isLineMode()) { await runLineBatch(); return; }
+    if (isProcessing) return;
     const w = parseInt(widthInput.value, 10);
     const h = parseInt(heightInput.value, 10);
     if (!w || !h || w < 1 || h < 1) {
       alert('幅と高さを正しく入力してください');
       return;
     }
+    isProcessing = true;
     processBtn.disabled = true;
     clearBtn.disabled = true;        // prevent clearing mid-batch
     processBtn.textContent = '処理中...';
@@ -1012,6 +1185,7 @@
     releaseProcessed();
     resultsDiv.innerHTML = '';
     resultsCard.classList.remove('hidden');
+    lastZipStem = null;
 
     const mode = modeSelect.value;
     const format = formatSelect.value;
@@ -1044,9 +1218,10 @@
       statsDiv.textContent = `処理中… (${i + 1} / ${total})`;
     }
 
+    isProcessing = false;
     processBtn.disabled = false;
     clearBtn.disabled = false;
-    processBtn.textContent = 'トリミング実行';
+    processBtn.textContent = isLineMode() ? 'スタンプ生成' : 'トリミング実行';
     downloadAllBtn.classList.toggle('hidden', processed.length === 0);
     driveSaveBtn.classList.toggle('hidden', processed.length === 0);
     clearBtn.classList.remove('hidden');
@@ -1138,8 +1313,8 @@
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, tw, th);
     }
-    const iw = img.naturalWidth;
-    const ih = img.naturalHeight;
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
     if (mode === 'stretch' && !transform.edited) {
       drawImageHQ(ctx, img, 0, 0, tw, th);
     } else {
@@ -1198,6 +1373,317 @@
     }
   }
 
+  // ---------------- LINE stamp mode processing ----------------
+  async function runLineBatch() {
+    if (!files.length || isProcessing) return;
+    const spec = LINE_SPECS[lineType.value] || LINE_SPECS.stamp;
+    const sheet = lineInput.value === 'sheet';
+    const cols = sheet ? clampInt(lineCols.value, 1, 12, 4) : 1;
+    const rows = sheet ? clampInt(lineRows.value, 1, 12, 4) : 1;
+    const bgLevel = lineBgRemove.value === 'off' ? null : (LINE_BG_LEVELS[lineBgRemove.value] || LINE_BG_LEVELS.normal);
+    const autoTrim = lineAutoTrim.checked;
+    const makeExtras = lineType.value === 'stamp' && lineMakeExtras.checked;
+
+    isProcessing = true;
+    processBtn.disabled = true;
+    clearBtn.disabled = true;
+    processBtn.textContent = '処理中...';
+    releaseProcessed();
+    resultsDiv.innerHTML = '';
+    resultsCard.classList.remove('hidden');
+    lastZipStem = 'line_' + lineType.value;
+
+    const batch = files.slice();
+    const totalCells = batch.length * cols * rows;
+    let made = 0, skipped = 0, errCount = 0, over1MB = 0, done = 0;
+    let extrasOk = false;
+    statsDiv.textContent = `処理中… (0 / ${totalCells} マス)`;
+
+    for (const f of batch) {
+      let decoded = null;
+      try {
+        decoded = await loadImage(f);
+      } catch (err) {
+        console.error(err);
+        errCount++;
+        done += cols * rows;
+        renderError(f, err);
+        continue;
+      }
+      try {
+        const img = decoded.img;
+        for (let ry = 0; ry < rows; ry++) {
+          for (let cx = 0; cx < cols; cx++) {
+            done++;
+            try {
+              const r = await processLineCell(img, f, {
+                cols, rows, cx, ry, spec, bgLevel, autoTrim, seq: made + 1,
+              });
+              if (!r) {
+                skipped++;
+              } else {
+                r.id = `r${Date.now()}_${done}`;
+                made++;
+                if (r.size > 1024 * 1024) { r.overLimit = true; over1MB++; }
+                processed.push(r);
+                renderResult(r);
+              }
+            } catch (err) {
+              console.error(err);
+              errCount++;
+              renderError(f, err);
+            }
+            statsDiv.textContent = `処理中… (${done} / ${totalCells} マス)`;
+            await new Promise(res => setTimeout(res, 0));  // keep the UI responsive
+          }
+        }
+      } finally {
+        URL.revokeObjectURL(decoded.url);
+      }
+    }
+
+    // main.png / tab.png を最初のスタンプから自動生成 (オプション)
+    if (makeExtras && processed.length) {
+      const srcResult = processed[0];
+      for (const key of ['main', 'tab']) {
+        try {
+          const d = await loadImage(srcResult.file);   // 透過処理済みのコマ画像を流用
+          try {
+            const r = await processLineCell(d.img, srcResult.file, {
+              cols: 1, rows: 1, cx: 0, ry: 0,
+              spec: LINE_SPECS[key], bgLevel: null, autoTrim: true, seq: 1,
+            });
+            if (r) {
+              r.id = `r${Date.now()}_${key}`;
+              if (r.size > 1024 * 1024) { r.overLimit = true; over1MB++; }
+              processed.push(r);
+              renderResult(r);
+              extrasOk = true;
+            }
+          } finally {
+            URL.revokeObjectURL(d.url);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    }
+
+    isProcessing = false;
+    processBtn.disabled = false;
+    clearBtn.disabled = false;
+    processBtn.textContent = isLineMode() ? 'スタンプ生成' : 'トリミング実行';
+    downloadAllBtn.classList.toggle('hidden', processed.length === 0);
+    driveSaveBtn.classList.toggle('hidden', processed.length === 0);
+    clearBtn.classList.remove('hidden');
+
+    let msg = `${made} 個の${spec.label}を生成しました`;
+    const notes = [];
+    if (extrasOk) notes.push('main/tab も生成');
+    if (skipped) notes.push(`空マス ${skipped} 件をスキップ`);
+    if (errCount) notes.push(`${errCount} 件失敗`);
+    if (notes.length) msg += `（${notes.join('・')}）`;
+    if (spec.pad === 2 && made > 0 && !LINE_STAMP_COUNTS.includes(made)) {
+      msg += ` ※LINEスタンプ申請に使える枚数は ${LINE_STAMP_COUNTS.join('/')} 個です`;
+    }
+    if (over1MB) msg += ` ⚠ ${over1MB} 件が 1MB を超えています`;
+    statsDiv.textContent = msg;
+
+    if (processed.length && driveAutoSave.checked) {
+      maybeAutoSaveToDrive();
+    }
+  }
+
+  // 1マス分を切り出して 透過 → 余白トリム → 中央配置 した結果を返す (空マスは null)
+  async function processLineCell(img, file, opt) {
+    const { cols, rows, cx, ry, spec, bgLevel, autoTrim, seq } = opt;
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    // 等分割 (端数は隣接マスに寄せる)
+    const sx = Math.round(iw * cx / cols);
+    const sy = Math.round(ih * ry / rows);
+    const sw = Math.round(iw * (cx + 1) / cols) - sx;
+    const sh = Math.round(ih * (ry + 1) / rows) - sy;
+    if (sw < 2 || sh < 2) return null;
+
+    // マスを取り出し、作業解像度に収める (中間のフルサイズ canvas は作らず切り出しと縮小を同時に行う)
+    const k = Math.min(1, LINE_CELL_MAX / Math.max(sw, sh));
+    const cellCanvas = document.createElement('canvas');
+    cellCanvas.width = Math.max(1, Math.round(sw * k));
+    cellCanvas.height = Math.max(1, Math.round(sh * k));
+    const cctx = cellCanvas.getContext('2d');
+    cctx.imageSmoothingEnabled = true;
+    cctx.imageSmoothingQuality = 'high';
+    cctx.drawImage(img, sx, sy, sw, sh, 0, 0, cellCanvas.width, cellCanvas.height);
+    const cw = cellCanvas.width, ch = cellCanvas.height;
+    const imageData = cctx.getImageData(0, 0, cw, ch);
+
+    // 背景の透過 (外周からの塗りつぶし判定なのでキャラクター内部の白は残る)
+    let bgRemoved = false;
+    if (bgLevel) {
+      const est = estimateBgColor(imageData);
+      if (est) {
+        removeBackground(imageData, est, bgLevel);
+        cctx.putImageData(imageData, 0, 0);
+        bgRemoved = true;
+      }
+    }
+
+    // 内容の範囲を検出 (実質空のマスはスキップ)
+    const bbox = contentBBox(imageData, bgRemoved ? null : estimateBgColor(imageData), 28);
+    if (!bbox) return null;
+
+    // ターゲットへ配置
+    const tw = spec.w, th = spec.h;
+    let scale, offsetX, offsetY;
+    if (autoTrim) {
+      const m = Math.max(2, Math.round(Math.min(tw, th) * 10 / 320)); // LINE推奨の10px余白を縮尺
+      const bw = bbox.x1 - bbox.x0 + 1;
+      const bh = bbox.y1 - bbox.y0 + 1;
+      scale = Math.min((tw - m * 2) / bw, (th - m * 2) / bh);
+      offsetX = (tw - bw * scale) / 2 - bbox.x0 * scale;
+      offsetY = (th - bh * scale) / 2 - bbox.y0 * scale;
+    } else {
+      scale = Math.min(tw / cw, th / ch);
+      offsetX = (tw - cw * scale) / 2;
+      offsetY = (th - ch * scale) / 2;
+    }
+    const transform = { scale, offsetX, offsetY, edited: false };
+    const outCanvas = renderToCanvas(cellCanvas, tw, th, transform, null, 'contain');
+    const blob = await canvasToBlob(outCanvas, 'image/png');
+
+    // 「編集」用にマス画像 (透過済み) を保持
+    const cellBlob = await canvasToBlob(cellCanvas, 'image/png');
+    const cellName = `${file.name.replace(/\.[^.]+$/, '')}_r${ry + 1}c${cx + 1}.png`;
+    const cellFile = new File([cellBlob], cellName, { type: 'image/png' });
+
+    const stem = spec.fixed ? spec.fixed : String(seq).padStart(spec.pad, '0');
+    return {
+      name: `${stem}.png`,
+      baseName: stem,
+      ext: 'png',
+      blob,
+      url: URL.createObjectURL(blob),
+      size: blob.size,
+      w: tw,
+      h: th,
+      originalName: cellName,
+      originalSize: cellBlob.size,
+      originalW: cw,
+      originalH: ch,
+      file: cellFile,
+      transform,
+      mode: 'contain',
+      format: 'image/png',
+      quality: 1,
+      bg: null,
+    };
+  }
+
+  // 外周ピクセルの最頻色 (≒背景色)。外周がほぼ透明なら null
+  function estimateBgColor(data) {
+    const w = data.width, h = data.height, px = data.data;
+    const bins = new Map();
+    const consider = (x, y) => {
+      const i = (y * w + x) * 4;
+      if (px[i + 3] < 200) return;
+      const key = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4);
+      let b = bins.get(key);
+      if (!b) { b = { n: 0, r: 0, g: 0, bl: 0 }; bins.set(key, b); }
+      b.n++; b.r += px[i]; b.g += px[i + 1]; b.bl += px[i + 2];
+    };
+    for (let x = 0; x < w; x++) { consider(x, 0); consider(x, h - 1); }
+    for (let y = 1; y < h - 1; y++) { consider(0, y); consider(w - 1, y); }
+    let best = null;
+    bins.forEach(b => { if (!best || b.n > best.n) best = b; });
+    if (!best) return null;
+    const est = { r: best.r / best.n, g: best.g / best.n, b: best.bl / best.n };
+    // 外周の大半が推定色に近いときだけ背景とみなす (被写体が縁を占める場合の誤消去防止)
+    let total = 0, near = 0;
+    const check = (x, y) => {
+      const i = (y * w + x) * 4;
+      if (px[i + 3] < 200) return;
+      total++;
+      const dr = px[i] - est.r, dg = px[i + 1] - est.g, db = px[i + 2] - est.b;
+      if (dr * dr + dg * dg + db * db < 70 * 70) near++;
+    };
+    for (let x = 0; x < w; x++) { check(x, 0); check(x, h - 1); }
+    for (let y = 1; y < h - 1; y++) { check(0, y); check(w - 1, y); }
+    if (!total || near / total < 0.6) return null;
+    return est;
+  }
+
+  // 外周から背景色をたどって透過する。境界は距離に応じた半透明にし、
+  // 背景色の混ざり (白フチ) を除去してなじませる
+  function removeBackground(data, bg, level) {
+    const w = data.width, h = data.height, px = data.data;
+    const hard2 = level.hard * level.hard;
+    const soft2 = level.soft * level.soft;
+    const dist2 = (i) => {
+      const dr = px[i] - bg.r, dg = px[i + 1] - bg.g, db = px[i + 2] - bg.b;
+      return dr * dr + dg * dg + db * db;
+    };
+    const state = new Uint8Array(w * h);
+    const queue = new Int32Array(w * h);
+    let qt = 0;
+    const tryPush = (idx) => {
+      if (state[idx]) return;
+      const i = idx * 4;
+      if (px[i + 3] < 16 || dist2(i) < soft2) { state[idx] = 1; queue[qt++] = idx; }
+    };
+    for (let x = 0; x < w; x++) { tryPush(x); tryPush((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { tryPush(y * w); tryPush(y * w + w - 1); }
+    let qh = 0;
+    while (qh < qt) {
+      const idx = queue[qh++];
+      const x = idx % w;
+      if (x > 0) tryPush(idx - 1);
+      if (x < w - 1) tryPush(idx + 1);
+      if (idx >= w) tryPush(idx - w);
+      if (idx < w * (h - 1)) tryPush(idx + w);
+    }
+    for (let idx = 0; idx < w * h; idx++) {
+      if (!state[idx]) continue;
+      const i = idx * 4;
+      const d2 = dist2(i);
+      if (d2 <= hard2) {
+        px[i + 3] = 0;
+      } else {
+        const a = Math.min(1, (Math.sqrt(d2) - level.hard) / (level.soft - level.hard));
+        px[i]     = clampByte((px[i]     - (1 - a) * bg.r) / a);
+        px[i + 1] = clampByte((px[i + 1] - (1 - a) * bg.g) / a);
+        px[i + 2] = clampByte((px[i + 2] - (1 - a) * bg.b) / a);
+        px[i + 3] = Math.round(px[i + 3] * a);
+      }
+    }
+  }
+
+  function clampByte(v) { return Math.max(0, Math.min(255, Math.round(v))); }
+
+  // 不透明かつ背景色でないピクセルの範囲。実質空なら null
+  function contentBBox(data, bg, tol) {
+    const w = data.width, h = data.height, px = data.data;
+    const tol2 = (tol || 0) * (tol || 0);
+    let x0 = w, y0 = h, x1 = -1, y1 = -1, count = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (px[i + 3] < 16) continue;
+        if (bg) {
+          const dr = px[i] - bg.r, dg = px[i + 1] - bg.g, db = px[i + 2] - bg.b;
+          if (dr * dr + dg * dg + db * db < tol2) continue;
+        }
+        count++;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    if (x1 < 0 || count < Math.min(Math.ceil(w * h * 0.02), Math.max(16, w * h * 0.0005))) return null;
+    return { x0, y0, x1, y1 };
+  }
+
   function renderResult(r) {
     const item = document.createElement('div');
     item.className = 'result-item';
@@ -1207,6 +1693,7 @@
       <div class="result-info">
         <div class="result-name" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</div>
         <div class="result-meta">${r.w}×${r.h} · ${formatBytes(r.size)}</div>
+        ${r.overLimit ? '<div style="color:var(--danger-text); font-size:11px;">⚠ 1MB を超えています (LINEの上限)</div>' : ''}
         <div style="font-size:11px;">元: ${r.originalW}×${r.originalH} · ${formatBytes(r.originalSize)}</div>
       </div>
       <div class="result-actions">
@@ -1315,7 +1802,8 @@
         entries.push({ name, bytes: new Uint8Array(buf) });
       }
       const zipBlob = makeZipBlob(entries);
-      downloadBlob(zipBlob, `trimmed_${entries.length}images.zip`);
+      const zipName = lastZipStem ? `${lastZipStem}_${entries.length}.zip` : `trimmed_${entries.length}images.zip`;
+      downloadBlob(zipBlob, zipName);
     } catch (err) {
       console.error(err);
       alert('ZIPの生成に失敗しました: ' + (err && err.message ? err.message : err));
@@ -1489,11 +1977,11 @@
 
     // Base scale = cover (使える最大の最小値)。拡大率 100% は「ちょうど画面を埋める」状態。
     const baseScale = Math.max(tw / iw, th / ih);
-    const minScale = Math.min(tw / iw, th / ih) * 0.5; // half of contain, allow lots of margin
-    const maxScale = baseScale * 5;
-
     // Start from current transform
     const cur = r.transform || computeInitialTransform(iw, ih, tw, th, r.mode);
+    // 余白トリム由来の transform は cover×5 を超えうるため、範囲を現在値まで広げる
+    const minScale = Math.min(Math.min(tw / iw, th / ih) * 0.5, cur.scale);
+    const maxScale = Math.max(baseScale * 5, cur.scale);
 
     editorState = {
       result: r,
@@ -1715,7 +2203,7 @@
   const tutorialDontShow = document.getElementById('tutorialDontShow');
   const tutorialDontShowWrap = document.getElementById('tutorialDontShowWrap');
   const helpBtn = document.getElementById('helpBtn');
-  const GUIDE_STORAGE_KEY = 'imageTrimmer_guideDismissed_v2';
+  const GUIDE_STORAGE_KEY = 'imageTrimmer_guideDismissed_v3';
 
   const tutorialSteps = [
     {
@@ -1737,6 +2225,11 @@
       selectors: ['#mode', '#format'],
       title: '3. トリミング方式を選択',
       text: '「中央クロップ」(はみ出しを切り取り)、「全体表示」(余白を追加)、「引き伸ばし」から選べます。JPEG/PNG/WebP の出力形式も指定可能。',
+    },
+    {
+      selector: '#lineModeRow',
+      title: 'LINEスタンプも作れます',
+      text: '「LINEスタンプモード」をオンにすると、1枚のシート画像をグリッド分割し、背景を透過して LINE Creators Market 申請用サイズ (370×320 など) の PNG を一括生成できます。1枚ずつの画像からも作れます。',
     },
     {
       selector: '#processBtn',
@@ -1808,14 +2301,16 @@
   }
 
   function resolveTargets(step) {
+    // display:none の要素はスポットライトしない (中央ツールチップにフォールバック)
+    const visible = el => !!el && el.getClientRects().length > 0;
     if (step.selectors && step.selectors.length) {
       return step.selectors
         .map(s => document.querySelector(s))
-        .filter(Boolean);
+        .filter(visible);
     }
     if (step.selector) {
       const el = document.querySelector(step.selector);
-      return el ? [el] : [];
+      return visible(el) ? [el] : [];
     }
     return [];
   }
