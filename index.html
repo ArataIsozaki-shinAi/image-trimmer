@@ -1444,12 +1444,14 @@
 
     // main.png / tab.png を最初のスタンプから自動生成 (オプション)
     if (makeExtras && processed.length) {
-      const srcResult = processed[0];
+      // 生成済みの最初のスタンプ (透過済み PNG) を流用する
+      const first = processed[0];
+      const stampFile = new File([first.blob], first.name, { type: 'image/png' });
       for (const key of ['main', 'tab']) {
         try {
-          const d = await loadImage(srcResult.file);   // 透過処理済みのコマ画像を流用
+          const d = await loadImage(stampFile);
           try {
-            const r = await processLineCell(d.img, srcResult.file, {
+            const r = await processLineCell(d.img, stampFile, {
               cols: 1, rows: 1, cx: 0, ry: 0,
               spec: LINE_SPECS[key], bgLevel: null, autoTrim: true, seq: 1,
             });
@@ -1552,10 +1554,15 @@
     const outCanvas = renderToCanvas(cellCanvas, tw, th, transform, null, 'contain');
     const blob = await canvasToBlob(outCanvas, 'image/png');
 
-    // 「編集」用にマス画像 (透過済み) を保持
-    const cellBlob = await canvasToBlob(cellCanvas, 'image/png');
-    const cellName = `${file.name.replace(/\.[^.]+$/, '')}_r${ry + 1}c${cx + 1}.png`;
-    const cellFile = new File([cellBlob], cellName, { type: 'image/png' });
+    // 「編集」では元画像 (シート全体) を開き直し、マス境界で見切れた部分も引き戻せるようにする。
+    // そのため transform はマス座標系ではなく元画像座標系で保持する:
+    // マス座標 c = (p - s0) * k → scale' = scale*k, offset' = offset - s0*k*scale
+    const sheetTransform = {
+      scale: scale * k,
+      offsetX: offsetX - sx * k * scale,
+      offsetY: offsetY - sy * k * scale,
+      edited: false,
+    };
 
     const stem = spec.fixed ? spec.fixed : String(seq).padStart(spec.pad, '0');
     return {
@@ -1567,12 +1574,13 @@
       size: blob.size,
       w: tw,
       h: th,
-      originalName: cellName,
-      originalSize: cellBlob.size,
+      originalName: file.name,
+      originalSize: file.size,
       originalW: cw,
       originalH: ch,
-      file: cellFile,
-      transform,
+      file,                          // 元ファイルを共有 (マスごとのコピーは持たない)
+      transform: sheetTransform,
+      line: { bgLevel },             // 「適用」時に背景の透過を掛け直すための設定
       mode: 'contain',
       format: 'image/png',
       quality: 1,
@@ -1931,6 +1939,7 @@
   const editorCenter = document.getElementById('editorCenter');
   const editorCancel = document.getElementById('editorCancel');
   const editorApply = document.getElementById('editorApply');
+  const editorHint = document.querySelector('.editor-hint');
 
   const EDITOR_MAX_DISPLAY = 520; // max px for long side of preview
 
@@ -1998,6 +2007,9 @@
     };
 
     editorTitle.textContent = `位置・サイズを調整 — ${tw}×${th}`;
+    editorHint.textContent = r.line
+      ? 'ドラッグで位置を移動 / ホイールまたはスライダーで拡大縮小。元画像全体から切り出し直せるので、マス境界で見切れた部分もドラッグで戻せます。背景の透過は「適用」時に自動で掛け直されます。'
+      : 'ドラッグで位置を移動 / マウスホイールまたはスライダーで拡大縮小';
     editorCanvas.width = Math.round(displayW);
     editorCanvas.height = Math.round(displayH);
     editorCanvasWrap.style.width = Math.round(displayW) + 'px';
@@ -2167,6 +2179,16 @@
       edited: true,
     };
     const canvas = renderToCanvas(s.img, s.tw, s.th, transform, s.bg, s.mode);
+    // LINEスタンプは切り出し直した範囲に背景の透過を掛け直す
+    if (r.line && r.line.bgLevel) {
+      const bctx = canvas.getContext('2d');
+      const data = bctx.getImageData(0, 0, canvas.width, canvas.height);
+      const est = estimateBgColor(data);
+      if (est) {
+        removeBackground(data, est, r.line.bgLevel);
+        bctx.putImageData(data, 0, 0);
+      }
+    }
     try {
       const blob = await canvasToBlob(canvas, r.format, r.quality);
       URL.revokeObjectURL(r.url);
