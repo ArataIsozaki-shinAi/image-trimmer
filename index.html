@@ -622,6 +622,7 @@
           <label for="lineType">作成する画像</label>
           <select id="lineType">
             <option value="stamp">スタンプ画像 (370×320)</option>
+            <option value="maintab">メイン + タブのみ (main.png / tab.png)</option>
             <option value="main">メイン画像 (240×240)</option>
             <option value="tab">トークルームタブ (96×74)</option>
             <option value="emoji">LINE絵文字 (180×180)</option>
@@ -1086,11 +1087,16 @@
     const src = sheet
       ? `各画像を ${cols}×${rows} = ${cols * rows} マスに等分割し、`
       : '各画像を1コマとして、';
-    const nameNote = spec.fixed
-      ? `ファイル名は ${spec.fixed}.png`
-      : `ファイル名は ${'1'.padStart(spec.pad, '0')}.png からの連番`;
-    lineSummary.textContent =
-      `${src}${spec.label} ${spec.w}×${spec.h} の透過PNGを書き出します（${nameNote}・空のマスは自動スキップ）。`;
+    if (lineType.value === 'maintab') {
+      lineSummary.textContent =
+        `${src}メイン画像 240×240 と トークルームタブ画像 96×74 の透過PNGをまとめて書き出します（ファイル名は main.png / tab.png・空のマスは自動スキップ）。`;
+    } else {
+      const nameNote = spec.fixed
+        ? `ファイル名は ${spec.fixed}.png`
+        : `ファイル名は ${'1'.padStart(spec.pad, '0')}.png からの連番`;
+      lineSummary.textContent =
+        `${src}${spec.label} ${spec.w}×${spec.h} の透過PNGを書き出します（${nameNote}・空のマスは自動スキップ）。`;
+    }
   }
 
   [lineModeToggle, lineType, lineInput, lineBgRemove].forEach(el => el.addEventListener('change', updateLineUI));
@@ -1152,7 +1158,7 @@
     if (s.bgTransparent != null) bgTransparent.checked = s.bgTransparent;
     if (s.namePattern != null) namePattern.value = s.namePattern;
     if (s.lineMode != null) lineModeToggle.checked = !!s.lineMode;
-    if (s.lineType != null && LINE_SPECS[s.lineType]) lineType.value = s.lineType;
+    if (s.lineType != null && (LINE_SPECS[s.lineType] || s.lineType === 'maintab')) lineType.value = s.lineType;
     if (s.lineInput != null) lineInput.value = s.lineInput === 'single' ? 'single' : 'sheet';
     if (s.lineCols != null) lineCols.value = s.lineCols;
     if (s.lineRows != null) lineRows.value = s.lineRows;
@@ -1376,7 +1382,11 @@
   // ---------------- LINE stamp mode processing ----------------
   async function runLineBatch() {
     if (!files.length || isProcessing) return;
-    const spec = LINE_SPECS[lineType.value] || LINE_SPECS.stamp;
+    // 「メイン + タブのみ」は1コマから main.png と tab.png の両方を書き出す
+    const specs = lineType.value === 'maintab'
+      ? [LINE_SPECS.main, LINE_SPECS.tab]
+      : [LINE_SPECS[lineType.value] || LINE_SPECS.stamp];
+    const spec = specs[0];   // メッセージ・枚数チェック用の代表
     const sheet = lineInput.value === 'sheet';
     const cols = sheet ? clampInt(lineCols.value, 1, 12, 4) : 1;
     const rows = sheet ? clampInt(lineRows.value, 1, 12, 4) : 1;
@@ -1416,18 +1426,20 @@
           for (let cx = 0; cx < cols; cx++) {
             done++;
             try {
-              const r = await processLineCell(img, f, {
-                cols, rows, cx, ry, spec, bgLevel, autoTrim, seq: made + 1,
-              });
-              if (!r) {
-                skipped++;
-              } else {
-                r.id = `r${Date.now()}_${done}`;
+              let cellHasContent = false;
+              for (const sp of specs) {
+                const r = await processLineCell(img, f, {
+                  cols, rows, cx, ry, spec: sp, bgLevel, autoTrim, seq: made + 1,
+                });
+                if (!r) continue;
+                cellHasContent = true;
+                r.id = `r${Date.now()}_${done}_${sp.fixed || 'n'}`;
                 made++;
                 if (r.size > 1024 * 1024) { r.overLimit = true; over1MB++; }
                 processed.push(r);
                 renderResult(r);
               }
+              if (!cellHasContent) skipped++;
             } catch (err) {
               console.error(err);
               errCount++;
@@ -1479,7 +1491,9 @@
     driveSaveBtn.classList.toggle('hidden', processed.length === 0);
     clearBtn.classList.remove('hidden');
 
-    let msg = `${made} 個の${spec.label}を生成しました`;
+    let msg = lineType.value === 'maintab'
+      ? `main.png / tab.png を生成しました（${made} ファイル）`
+      : `${made} 個の${spec.label}を生成しました`;
     const notes = [];
     if (extrasOk) notes.push('main/tab も生成');
     if (skipped) notes.push(`空マス ${skipped} 件をスキップ`);
