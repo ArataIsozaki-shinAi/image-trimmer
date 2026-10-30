@@ -445,6 +445,48 @@
     padding: 0 4px;
     font-size: 11px;
   }
+  .result-item { position: relative; }
+  .result-remove {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .result-remove:hover { background: var(--danger); }
+  .results.busy .result-remove { display: none; }
+  .results-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .results-head h3 { margin: 0; }
+  .results-head .btn { padding: 6px 12px; font-size: 13px; }
+  .result-actions.wrap { flex-wrap: wrap; }
+  .result-actions.wrap button { flex: 1 1 calc(50% - 3px); }
+  .result-resize {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .result-resize input {
+    width: 64px;
+    font: inherit;
+    font-size: 12px;
+    padding: 2px 4px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+  }
+  .result-resize button { padding: 3px 8px; font-size: 12px; border-radius: 6px; }
+  .result-resize .resize-note { flex-basis: 100%; font-size: 11px; }
   .result-name { cursor: text; }
   .result-name:hover { text-decoration: underline dotted; }
   .result-name-input {
@@ -736,7 +778,11 @@
   </div>
 
   <div id="resultsCard" class="card hidden">
-    <h3 style="margin:0 0 8px;">結果</h3>
+    <div class="results-head">
+      <h3>結果</h3>
+      <button id="resultsAddBtn" class="btn btn-secondary" type="button">＋ 画像を追加</button>
+      <input type="file" id="resultsAddInput" accept="image/*" multiple class="hidden" aria-label="結果に追加する画像ファイルを選択">
+    </div>
     <div id="stats" class="stats" role="status" aria-live="polite"></div>
     <div id="results" class="results"></div>
   </div>
@@ -858,6 +904,8 @@
   const clearBtn = document.getElementById('clearBtn');
   const resultsCard = document.getElementById('resultsCard');
   const resultsDiv = document.getElementById('results');
+  const resultsAddBtn = document.getElementById('resultsAddBtn');
+  const resultsAddInput = document.getElementById('resultsAddInput');
   const statsDiv = document.getElementById('stats');
   const namePattern = document.getElementById('namePattern');
   const driveSaveBtn = document.getElementById('driveSaveBtn');
@@ -894,6 +942,11 @@
   let processed = [];
   let lastZipStem = null;         // 'line_stamp' など。通常モードは null
   let isProcessing = false;       // バッチ実行中は再実行とラベル書き換えを抑止
+  // バッチ中は結果の削除・追加を止める (LINEの連番がずれないように)
+  function setResultsBusy(busy) {
+    resultsDiv.classList.toggle('busy', busy);
+    resultsAddBtn.disabled = busy;
+  }
 
   // ------- File selection -------
   dropZone.addEventListener('click', () => fileInput.click());
@@ -928,7 +981,7 @@
 
   function addFiles(list) {
     const imgs = Array.from(list).filter(f => f.type.startsWith('image/'));
-    if (!imgs.length) return;
+    if (!imgs.length) return [];
     const seen = new Set(files.map(fileKey));
     const newly = [];
     for (const f of imgs) {
@@ -940,7 +993,7 @@
       newly.push(f);
     }
     fileInput.value = '';                // allow re-selecting the same file later
-    if (!newly.length) return;
+    if (!newly.length) return newly;
     renderFileList();
     updateUI();
     // Generate small thumbnails one at a time to keep peak memory ~1 image
@@ -958,6 +1011,7 @@
         }
       }
     })();
+    return newly;
   }
 
   async function makeThumb(file) {
@@ -1175,8 +1229,13 @@
 
   // ------- Processing -------
   processBtn.addEventListener('click', async () => {
-    if (isLineMode()) { await runLineBatch(); return; }
-    if (isProcessing) return;
+    if (isLineMode()) { await runLineBatch(files.slice(), false); return; }
+    await runGenericBatch(files.slice(), false);
+  });
+
+  // append=true: 既存の結果を残したまま、batch の分だけ末尾に足す
+  async function runGenericBatch(batch, append) {
+    if (isProcessing || !batch.length) return;
     const w = parseInt(widthInput.value, 10);
     const h = parseInt(heightInput.value, 10);
     if (!w || !h || w < 1 || h < 1) {
@@ -1185,13 +1244,15 @@
     }
     isProcessing = true;
     processBtn.disabled = true;
-    clearBtn.disabled = true;        // prevent clearing mid-batch
+    clearBtn.disabled = true; setResultsBusy(true);        // prevent clearing mid-batch
     processBtn.textContent = '処理中...';
 
-    releaseProcessed();
-    resultsDiv.innerHTML = '';
+    if (!append) {
+      releaseProcessed();
+      resultsDiv.innerHTML = '';
+      lastZipStem = null;
+    }
     resultsCard.classList.remove('hidden');
-    lastZipStem = null;
 
     const mode = modeSelect.value;
     const format = formatSelect.value;
@@ -1199,9 +1260,9 @@
     const useTransparent = bgTransparent.checked && format !== 'image/jpeg';
     const bg = useTransparent ? null : bgColor.value;
 
-    // Snapshot the selection so any concurrent add/remove can't disturb this batch
-    const batch = files.slice();
+    // batch は呼び出し側で複製済み: 実行中に選択が増減しても影響しない
     const total = batch.length;
+    const base = processed.length;   // 追加時は既存の件数から連番を続ける
     const pattern = namePattern.value;
     let errCount = 0;
     statsDiv.textContent = `処理中… (0 / ${total})`;
@@ -1210,9 +1271,9 @@
       try {
         const result = await processImage(batch[i], w, h, mode, format, quality, bg);
         result.id = `r${Date.now()}_${i}`;
-        result.index = i + 1;
+        result.index = base + i + 1;
         result.name = buildName(pattern, {
-          name: result.baseName, w: result.w, h: result.h, index: i + 1, total, ext: result.ext,
+          name: result.baseName, w: result.w, h: result.h, index: base + i + 1, total: base + total, ext: result.ext,
         });
         processed.push(result);
         renderResult(result);
@@ -1226,19 +1287,24 @@
 
     isProcessing = false;
     processBtn.disabled = false;
-    clearBtn.disabled = false;
+    clearBtn.disabled = false; setResultsBusy(false);
     processBtn.textContent = isLineMode() ? 'スタンプ生成' : 'トリミング実行';
     downloadAllBtn.classList.toggle('hidden', processed.length === 0);
     driveSaveBtn.classList.toggle('hidden', processed.length === 0);
     clearBtn.classList.remove('hidden');
-    statsDiv.textContent = errCount
-      ? `${processed.length} / ${total} 件を処理しました（${errCount} 件失敗）`
-      : `${processed.length} / ${total} 件を処理しました`;
+    const okCount = processed.length - base;
+    const failNote = errCount ? `（${errCount} 件失敗）` : '';
+    statsDiv.textContent = append
+      ? `${okCount} 件を追加しました${failNote}（合計 ${processed.length} 件）`
+      : errCount
+        ? `${processed.length} / ${total} 件を処理しました${failNote}`
+        : `${processed.length} / ${total} 件を処理しました`;
 
-    if (processed.length && driveAutoSave.checked) {
+    // 追加時は Drive へ全件を再送すると重複するので自動保存しない
+    if (!append && processed.length && driveAutoSave.checked) {
       maybeAutoSaveToDrive();
     }
-  });
+  }
 
   function releaseProcessed() {
     processed.forEach(r => {
@@ -1380,8 +1446,8 @@
   }
 
   // ---------------- LINE stamp mode processing ----------------
-  async function runLineBatch() {
-    if (!files.length || isProcessing) return;
+  async function runLineBatch(batch, append) {
+    if (!batch.length || isProcessing) return;
     // 「メイン + タブのみ」は1コマから main.png と tab.png の両方を書き出す
     const specs = lineType.value === 'maintab'
       ? [LINE_SPECS.main, LINE_SPECS.tab]
@@ -1392,20 +1458,23 @@
     const rows = sheet ? clampInt(lineRows.value, 1, 12, 4) : 1;
     const bgLevel = lineBgRemove.value === 'off' ? null : (LINE_BG_LEVELS[lineBgRemove.value] || LINE_BG_LEVELS.normal);
     const autoTrim = lineAutoTrim.checked;
-    const makeExtras = lineType.value === 'stamp' && lineMakeExtras.checked;
+    const makeExtras = !append && lineType.value === 'stamp' && lineMakeExtras.checked;
 
     isProcessing = true;
     processBtn.disabled = true;
-    clearBtn.disabled = true;
+    clearBtn.disabled = true; setResultsBusy(true);
     processBtn.textContent = '処理中...';
-    releaseProcessed();
-    resultsDiv.innerHTML = '';
+    if (!append) {
+      releaseProcessed();
+      resultsDiv.innerHTML = '';
+      lastZipStem = 'line_' + lineType.value;
+    }
     resultsCard.classList.remove('hidden');
-    lastZipStem = 'line_' + lineType.value;
 
-    const batch = files.slice();
     const totalCells = batch.length * cols * rows;
-    let made = 0, skipped = 0, errCount = 0, over1MB = 0, done = 0;
+    // 追加時は既存の連番画像 (01.png…) の続きから採番する
+    const base = append ? processed.filter(r => r.line && /^\d+\.png$/.test(r.name)).length : 0;
+    let made = base, skipped = 0, errCount = 0, over1MB = 0, done = 0;
     let extrasOk = false;
     statsDiv.textContent = `処理中… (0 / ${totalCells} マス)`;
 
@@ -1485,27 +1554,28 @@
 
     isProcessing = false;
     processBtn.disabled = false;
-    clearBtn.disabled = false;
+    clearBtn.disabled = false; setResultsBusy(false);
     processBtn.textContent = isLineMode() ? 'スタンプ生成' : 'トリミング実行';
     downloadAllBtn.classList.toggle('hidden', processed.length === 0);
     driveSaveBtn.classList.toggle('hidden', processed.length === 0);
     clearBtn.classList.remove('hidden');
 
+    const verb = append ? '追加' : '生成';
     let msg = lineType.value === 'maintab'
-      ? `main.png / tab.png を生成しました（${made} ファイル）`
-      : `${made} 個の${spec.label}を生成しました`;
+      ? `main.png / tab.png を${verb}しました（${made - base} ファイル）`
+      : `${made - base} 個の${spec.label}を${verb}しました`;
     const notes = [];
     if (extrasOk) notes.push('main/tab も生成');
     if (skipped) notes.push(`空マス ${skipped} 件をスキップ`);
     if (errCount) notes.push(`${errCount} 件失敗`);
     if (notes.length) msg += `（${notes.join('・')}）`;
-    if (spec.pad === 2 && made > 0 && !LINE_STAMP_COUNTS.includes(made)) {
+    if (spec.pad === 2 && made > 0 && !LINE_STAMP_COUNTS.includes(made)) {   // 追加時は合計枚数で判定
       msg += ` ※LINEスタンプ申請に使える枚数は ${LINE_STAMP_COUNTS.join('/')} 個です`;
     }
     if (over1MB) msg += ` ⚠ ${over1MB} 件が 1MB を超えています`;
     statsDiv.textContent = msg;
 
-    if (processed.length && driveAutoSave.checked) {
+    if (!append && processed.length && driveAutoSave.checked) {
       maybeAutoSaveToDrive();
     }
   }
@@ -1594,7 +1664,7 @@
       originalH: ch,
       file,                          // 元ファイルを共有 (マスごとのコピーは持たない)
       transform: sheetTransform,
-      line: { bgLevel },             // 「適用」時に背景の透過を掛け直すための設定
+      line: { bgLevel, cols, rows, cx, ry, autoTrim },  // 「適用」時の透過掛け直し・サイズ変更時のマス再切り出しに使う
       mode: 'contain',
       format: 'image/png',
       quality: 1,
@@ -1711,22 +1781,27 @@
     item.className = 'result-item';
     item.dataset.id = r.id;
     item.innerHTML = `
+      <button class="result-remove" type="button" aria-label="${escapeHtml(r.name)} を結果から削除" title="結果から削除">×</button>
       <div class="result-thumb"><img src="${r.url}" alt="${escapeHtml(r.name)}"></div>
       <div class="result-info">
         <div class="result-name" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</div>
         <div class="result-meta">${r.w}×${r.h} · ${formatBytes(r.size)}</div>
-        ${r.overLimit ? '<div style="color:var(--danger-text); font-size:11px;">⚠ 1MB を超えています (LINEの上限)</div>' : ''}
+        ${r.overLimit ? '<div class="result-warn" style="color:var(--danger-text); font-size:11px;">⚠ 1MB を超えています (LINEの上限)</div>' : ''}
         <div style="font-size:11px;">元: ${r.originalW}×${r.originalH} · ${formatBytes(r.originalSize)}</div>
       </div>
-      <div class="result-actions">
+      <div class="result-actions wrap">
         <button class="btn btn-secondary rename" aria-label="${escapeHtml(r.name)} の名前を変更">名前変更</button>
         <button class="btn btn-secondary edit" aria-label="${escapeHtml(r.name)} を編集">編集</button>
+        <button class="btn btn-secondary resize" aria-label="${escapeHtml(r.name)} のサイズを変更">サイズ変更</button>
         <button class="btn btn-primary dl" aria-label="${escapeHtml(r.name)} を保存">保存</button>
       </div>
     `;
     item.querySelector('.dl').addEventListener('click', () => downloadBlob(r.blob, r.name));
     item.querySelector('.edit').addEventListener('click', () => openEditor(r));
     item.querySelector('.rename').addEventListener('click', () => startRename(item, r));
+    const resizeBtn = item.querySelector('.resize');
+    if (resizeBtn) resizeBtn.addEventListener('click', () => startResize(item, r));
+    item.querySelector('.result-remove').addEventListener('click', () => removeResult(r));
     const nameEl = item.querySelector('.result-name');
     nameEl.title = 'クリック、または「名前変更」ボタンで変更';
     nameEl.addEventListener('click', () => startRename(item, r));
@@ -1786,13 +1861,164 @@
     input.addEventListener('blur', () => commit(true));
   }
 
+  // Inline size change of a single result: re-renders from the original file at the new size.
+  // A manual position/zoom edit is reset to the mode's automatic fit (aspect ratio may differ).
+  function startResize(item, r) {
+    const existing = item.querySelector('.result-resize');
+    if (existing) { existing.remove(); return; }
+    const row = document.createElement('div');
+    row.className = 'result-resize';
+    row.innerHTML = `
+      <input type="number" class="rw" min="1" max="10000" value="${r.w}" aria-label="幅 (px)">
+      <span>×</span>
+      <input type="number" class="rh" min="1" max="10000" value="${r.h}" aria-label="高さ (px)">
+      <button class="btn btn-primary ok">適用</button>
+      <button class="btn btn-secondary cancel">閉じる</button>
+      ${r.transform && r.transform.edited ? '<div class="resize-note">※ 手動で調整した位置・拡大率はリセットされます</div>' : ''}
+    `;
+    item.querySelector('.result-info').appendChild(row);
+    const rw = row.querySelector('.rw');
+    const rh = row.querySelector('.rh');
+    const ok = row.querySelector('.ok');
+    rw.focus();
+    rw.select();
+
+    let busy = false;
+    const submit = async () => {
+      if (busy) return;
+      const w = parseInt(rw.value, 10);
+      const h = parseInt(rh.value, 10);
+      if (!(w >= 1 && w <= 10000 && h >= 1 && h <= 10000)) {
+        alert('幅と高さは 1〜10000 の整数で入力してください');
+        return;
+      }
+      if (w === r.w && h === r.h) { row.remove(); return; }
+      busy = true;
+      ok.disabled = true;
+      ok.textContent = '処理中…';
+      try {
+        await resizeResult(r, w, h);
+        updateResultItem(r);
+        row.remove();
+      } catch (err) {
+        console.error(err);
+        alert('サイズの変更に失敗しました: ' + err.message);
+        busy = false;
+        ok.disabled = false;
+        ok.textContent = '適用';
+      }
+    };
+    ok.addEventListener('click', submit);
+    row.querySelector('.cancel').addEventListener('click', () => { if (!busy) row.remove(); });
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      else if (e.key === 'Escape' && !busy) { e.preventDefault(); row.remove(); }
+    });
+  }
+
+  async function resizeResult(r, w, h) {
+    const { img, url } = await loadImage(r.file);
+    try {
+      let transform, blob;
+      if (r.line) {
+        // LINEスタンプは「マス切り出し → 透過 → 余白トリム → 中央配置」を新サイズでやり直す
+        if (r.line.cols == null) throw new Error('もう一度スタンプ生成してから変更してください');
+        const nr = await processLineCell(img, r.file, { ...r.line, spec: { w, h, pad: 1 }, seq: 1 });
+        if (!nr) throw new Error('画像の内容を検出できませんでした');
+        URL.revokeObjectURL(nr.url);   // blob だけ使い、URL はここで作り直す
+        transform = nr.transform;
+        blob = nr.blob;
+      } else {
+        transform = computeInitialTransform(img.naturalWidth, img.naturalHeight, w, h, r.mode);
+        const canvas = renderToCanvas(img, w, h, transform, r.bg, r.mode);
+        blob = await canvasToBlob(canvas, r.format, r.quality);
+      }
+      URL.revokeObjectURL(r.url);
+      // 名前に旧サイズ ({w}x{h} パターン由来) が含まれていれば新サイズへ追随させる
+      r.name = r.name.replace(`${r.w}x${r.h}`, `${w}x${h}`);
+      r.blob = blob;
+      r.size = blob.size;
+      r.url = URL.createObjectURL(blob);
+      r.w = w;
+      r.h = h;
+      r.transform = transform;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // 結果から1枚消す。LINEの連番画像 (01.png…) は欠番ができないよう詰め直す
+  function removeResult(r) {
+    if (isProcessing) return;
+    const i = processed.indexOf(r);
+    if (i === -1) return;
+    processed.splice(i, 1);
+    if (r.url) URL.revokeObjectURL(r.url);
+    const item = resultsDiv.querySelector(`.result-item[data-id="${r.id}"]`);
+    if (item) item.remove();
+    let n = 0;
+    for (const x of processed) {
+      const m = x.line && /^(\d+)\.png$/.exec(x.name);
+      if (!m) continue;
+      n++;
+      const name = `${String(n).padStart(m[1].length, '0')}.png`;
+      if (name !== x.name) { x.name = name; updateResultItem(x); }
+    }
+    let msg = `${r.name} を結果から削除しました（残り ${processed.length} 件）`;
+    if (lastZipStem === 'line_stamp' && n > 0 && !LINE_STAMP_COUNTS.includes(n)) {
+      msg += ` ※LINEスタンプ申請に使える枚数は ${LINE_STAMP_COUNTS.join('/')} 個です`;
+    }
+    statsDiv.textContent = msg;
+    downloadAllBtn.classList.toggle('hidden', processed.length === 0);
+    driveSaveBtn.classList.toggle('hidden', processed.length === 0);
+    updateUI();
+  }
+
+  // 結果の「画像を追加」: いまの設定で処理して末尾に足す (既存の結果は触らない)
+  resultsAddBtn.addEventListener('click', () => { if (!isProcessing) resultsAddInput.click(); });
+  resultsAddInput.addEventListener('change', async (e) => {
+    const picked = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
+    e.target.value = '';
+    if (!picked.length || isProcessing) return;
+    // すでに結果にある画像だけ除く (結果から消した画像は、あとで入れ直せる)
+    const inResults = new Set(processed.map(r => fileKey(r.file)));
+    const fresh = picked.filter(f => !inResults.has(fileKey(f)));
+    if (!fresh.length) {
+      statsDiv.textContent = '選んだ画像はすべて、すでに結果にあります';
+      return;
+    }
+    addFiles(fresh);   // 選択リストにも入れる (すでにあれば何もしない)
+    if (isLineMode()) await runLineBatch(fresh, true);
+    else await runGenericBatch(fresh, true);
+  });
+
   function updateResultItem(r) {
     const item = resultsDiv.querySelector(`.result-item[data-id="${r.id}"]`);
     if (!item) return;
     const imgEl = item.querySelector('.result-thumb img');
     imgEl.src = r.url;
+    imgEl.alt = r.name;
     const meta = item.querySelector('.result-meta');
     if (meta) meta.textContent = `${r.w}×${r.h} · ${formatBytes(r.size)}`;
+    const nameEl = item.querySelector('.result-name');
+    if (nameEl) nameEl.textContent = r.name;
+    if (r.line) {
+      r.overLimit = r.size > 1024 * 1024;
+      const warn = item.querySelector('.result-warn');
+      if (warn && !r.overLimit) warn.remove();
+      else if (!warn && r.overLimit) {
+        const el = document.createElement('div');
+        el.className = 'result-warn';
+        el.style.cssText = 'color:var(--danger-text); font-size:11px;';
+        el.textContent = '⚠ 1MB を超えています (LINEの上限)';
+        meta.after(el);
+      }
+    }
+    const suffix = { '.dl': 'を保存', '.edit': 'を編集', '.rename': 'の名前を変更', '.resize': 'のサイズを変更' };
+    for (const sel in suffix) {
+      const btn = item.querySelector(sel);
+      if (btn) btn.setAttribute('aria-label', `${r.name} ${suffix[sel]}`);
+    }
   }
 
   function renderError(file, err) {
